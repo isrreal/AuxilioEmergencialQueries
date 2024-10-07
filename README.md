@@ -19,27 +19,25 @@ Para otimizar as consultas no banco de dados, são criados índices nas colunas 
 
 ```sql
 -- Índice para a tabela de beneficiários, com base em CPF (consultas por CPF são comuns)
-CREATE INDEX idx_beneficiario_cpf ON beneficiario(cpf_beneficiario);
+CREATE INDEX idx_beneficiario_cpf ON beneficiario USING BTREE (cpf_beneficiario);
 
 -- Índice para a tabela de beneficiários, com base no município e UF (para consultas por localização)
-CREATE INDEX idx_beneficiario_localizacao ON beneficiario(codigo_ibge_municipio, uf);
+CREATE INDEX idx_beneficiario_localizacao ON beneficiario USING BTREE (codigo_ibge_municipio, uf);
 
 -- Índice para a tabela de auxílios, com base no NIS do beneficiário (para junções frequentes entre auxilio e beneficiário)
-CREATE INDEX idx_auxilio_nis_beneficiario ON auxilio(nis_beneficiario);
+CREATE INDEX idx_auxilio_nis_beneficiario ON auxilio USING BTREE (nis_beneficiario);
 
 -- Índice para a tabela de auxílios, com base no enquadramento e parcela (consultas específicas de auxílio)
-CREATE INDEX idx_auxilio_enquadramento_parcela ON auxilio(enquadramento, parcela);
+CREATE INDEX idx_auxilio_enquadramento_parcela ON auxilio USING BTREE (enquadramento, parcela);
 
 -- Índice para a tabela de responsáveis, com base no CPF do responsável
-CREATE INDEX idx_responsavel_cpf ON responsavel(cpf_responsavel);
+CREATE INDEX idx_responsavel_cpf ON responsavel USING BTREE (cpf_responsavel);
 
 -- Índice para a tabela de responsáveis, com base no nome do responsável
-CREATE INDEX idx_responsavel_nome ON responsavel(nome_responsavel);
+CREATE INDEX idx_responsavel_nome ON responsavel USING BTREE (nome_responsavel);
 
 -- Índice para a tabela de auxílios, com base no ano e mês (para consultas por período)
-CREATE INDEX idx_auxilio_ano_mes ON auxilio(ano_mes);
-
-
+CREATE INDEX idx_auxilio_ano_mes ON auxilio USING BTREE (ano_mes);
 ```
 ### Normalização das Tabelas
 
