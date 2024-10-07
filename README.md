@@ -1,4 +1,4 @@
-o# Descrição do Funcionamento do Código
+# Descrição do Funcionamento do Código
 
 Este projeto tem como foco demonstrar a eficiência do uso de índices em um banco de dados grande, utilizando o conjunto de dados do auxílio emergencial, disponível no [Brasil.io](https://brasil.io/dataset/govbr/auxilio_emergencial/), que possui aproximadamente 30GB.
 
