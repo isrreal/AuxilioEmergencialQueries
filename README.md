@@ -1,4 +1,4 @@
-# Descrição do Funcionamento do Código
+o# Descrição do Funcionamento do Código
 
 Este projeto tem como foco demonstrar a eficiência do uso de índices em um banco de dados grande, utilizando o conjunto de dados do auxílio emergencial, disponível no [Brasil.io](https://brasil.io/dataset/govbr/auxilio_emergencial/), que possui aproximadamente 30GB.
 
@@ -11,7 +11,7 @@ O código SQL fornecido tem o objetivo de criar e normalizar a estrutura de um b
 
 ### Criação de Índices
 
-Para otimizar as consultas no banco de dados, são criados índices nas colunas mais frequentemente consultadas, como:
+Para otimizar as consultas no banco de dados, são criados índices baseados em árvores B nas colunas mais frequentemente consultadas, como:
 
 - **CPF e NIS** dos beneficiários e responsáveis, otimizando buscas por CPF/NIS e junções entre tabelas.
 - **Localização (código IBGE e UF)**, para consultas relacionadas à região geográfica.
