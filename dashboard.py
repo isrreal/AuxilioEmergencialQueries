@@ -1,7 +1,10 @@
 import ipywidgets
 import psycopg2
 import pandas 
+
 from sqlalchemy import create_engine
+from IPython.display import display
+
 
 
 # Tema: Dados informativos sobre o auxílio emergencial liberado por conta da pandemia da COVID-19.
