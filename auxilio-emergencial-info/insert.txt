@@ -1,0 +1,83 @@
+---------------------------------- Tabela Geral ----------------------------------
+
+CREATE TABLE auxilio_emergencial(
+  ano_mes VARCHAR(6),
+  uf VARCHAR(2),
+  codigo_ibge_municipio integer,
+  municipio text,
+  nis_beneficiario text,
+  cpf_beneficiario text,
+  beneficiario text,
+  nis_responsavel text, 
+  cpf_responsavel  text,
+  responsavel text,
+  enquadramento text,
+  parcela integer,
+  observacao text,
+  valor FLOAT
+);
+
+
+------------------------------------ Responsáveis ------------------------------------
+
+CREATE TABLE IF NOT EXISTS responsavel (
+	nis_responsavel text PRIMARY KEY,
+	cpf_responsavel text,
+ 	nome_responsavel text
+);
+
+INSERT INTO responsavel(nis_responsavel, cpf_responsavel, nome_responsavel)
+SELECT
+	DISTINCT ON (nis_responsavel) nis_responsavel,
+	cpf_responsavel,
+	responsavel
+FROM auxilio_emergencial
+WHERE nis_responsavel != '-2';
+
+INSERT INTO responsavel VALUES ('-2',' ','responsavel indefinido');
+
+
+------------------------------------ Beneficiários ------------------------------------
+
+CREATE TABLE IF NOT EXISTS beneficiario (
+	nis_beneficiario text PRIMARY KEY,
+	cpf_beneficiario text, 
+ 	nome_beneficiario text,
+ 	uf VARCHAR(2),
+	codigo_ibge_municipio integer,
+	municipio text,
+	nis_responsavel text,
+	FOREIGN KEY (nis_responsavel) REFERENCES responsavel(nis_responsavel)
+);
+
+INSERT INTO beneficiario(nis_beneficiario, cpf_beneficiario, nome_beneficiario, uf, codigo_ibge_municipio, municipio, nis_responsavel)
+SELECT
+	DISTINCT ON (nis_beneficiario) nis_beneficiario,
+	cpf_beneficiario,
+	beneficiario,
+	uf,
+	codigo_ibge_municipio,
+	municipio,
+	nis_responsavel
+FROM auxilio_emergencial
+WHERE nis_beneficiario IS NOT NULL;
+
+
+------------------------------------ Auxílios ------------------------------------
+
+CREATE TABLE IF NOT EXISTS auxilio (
+	ano_mes VARCHAR(6),
+	enquadramento text,
+	parcela integer,
+	observacao text,
+	valor FLOAT,
+	nis_beneficiario text,
+	FOREIGN KEY (nis_beneficiario) REFERENCES beneficiario(nis_beneficiario)
+);
+
+INSERT INTO auxilio (ano_mes, enquadramento, parcela, observacao, valor, nis_beneficiario)
+SELECT ano_mes, enquadramento, parcela, observacao, valor, nis_beneficiario
+FROM auxilio_emergencial
+WHERE nis_beneficiario IS NOT NULL;
+
+

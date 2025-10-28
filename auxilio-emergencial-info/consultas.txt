@@ -1,0 +1,75 @@
+
+----- Beneficiários que receberam 600 reais   ---------
+
+SELECT nome_beneficiario AS nome, cpf_beneficiario AS CPF, municipio, uf AS estado, valor
+FROM beneficiario
+NATURAL JOIN auxilio
+WHERE auxilio.valor = 600
+GROUP BY (nome, cpf, beneficiario.municipio, estado, auxilio.valor)
+ORDER BY nome_beneficiario;
+
+
+
+----- Gasto total do governo com o auxilio emergencial no estado do Ceará --------
+
+SELECT SUM(valor) as valor_gasto_total 
+FROM auxilio 
+NATURAL JOIN beneficiario
+WHERE UF = 'CE'
+
+
+
+
+----- Quantidade de beneficiários no município de Quixadá -----
+
+
+SELECT COUNT(nis_beneficiario) AS quantidade_de_beneficiarios 
+FROM beneficiario 
+NATURAL JOIN auxilio 
+WHERE beneficiario.UF = 'CE' AND beneficiario.municipio = 'Quixadá';
+
+
+
+------- Beneficiários que são responsáveis concomitantes ------
+
+SELECT beneficiario.nome_beneficiario, beneficiario.cpf_beneficiario, beneficiario.municipio, beneficiario.UF, responsavel.nis_responsavel
+FROM beneficiario
+NATURAL JOIN auxilio
+NATURAL JOIN responsavel
+
+WHERE UF = 'CE';
+
+
+
+
+
+-------- Beneficiários que receberam mais que uma parcela no estado do Ceará
+
+SELECT beneficiario.nome_beneficiario, beneficiario.cpf_beneficiario, beneficiario.municipio
+FROM beneficiario
+NATURAL JOIN auxilio
+WHERE parcela > 1 AND beneficiario.UF = 'CE';
+
+
+
+
+
+------- Beneficiários que tem o nome "Israel"
+
+
+SELECT beneficiario.nome_beneficiario as nome, beneficiario.cpf_beneficiario as CPF, beneficiario.nis_beneficiario as NIS
+FROM beneficiario 
+NATURAL JOIN auxilio 
+WHERE beneficiario.nome_beneficiario LIKE 'ISRAEL %'; 
+
+
+
+
+
+--------- Montante gasto pelo governo no mês de julho de 2020 em toda nação
+
+SELECT SUM(valor) AS valor_gasto 
+FROM auxilio
+NATURAL JOIN beneficiario 
+WHERE ano_mes = '202007';
+ 
