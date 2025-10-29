@@ -1,205 +1,147 @@
 import asyncio
 import pandas as pd
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
-from sqlalchemy import update
-from app.core.database import engine, Session
-from app.models import Responsavel, Beneficiario, Auxilio
-from typing import Optional
+from app.core.database import engine
+from app.core.configs import settings
+
+async def create_tables() -> None:
+    import app.models.__all_models
+
+    print("Criando as tabelas do banco de dados...")
+
+    async with engine.begin() as conn:
+        await conn.run_sync(settings.DBBaseModel.metadata.drop_all)
+        await conn.run_sync(settings.DBBaseModel.metadata.create_all)
+
+    print("Tabelas criadas com sucesso")
 
 
-class ImportadorCSV:
-    """Classe para importar dados de auxílios do CSV para o banco de dados."""
-    
-    def __init__(self, csv_path: str):
-        self.csv_path = csv_path
-        self.df = None
-        self.stats = {
-            'responsaveis_novos': 0,
-            'beneficiarios_novos': 0,
-            'auxilios_novos': 0,
-            'erros': 0
-        }
-    
-    def carregar_csv(self):
-        """Carrega o arquivo CSV."""
-        print(f"Carregando arquivo CSV: {self.csv_path}")
-        self.df = pd.read_csv(self.csv_path, dtype=str)
-        
-        self.df.columns = self.df.columns.str.strip()
-        
-        print(f"Total de registros no CSV: {len(self.df)}")
-        print(f"Colunas encontradas: {list(self.df.columns)}")
-        
-        self.df = self.df.fillna('')
-        
-        return self
-    
-    async def buscar_ou_criar_responsavel(
-        self, 
-        session: AsyncSession, 
-        nis: str, 
-        cpf: str, 
-        nome: str
-    ) -> Responsavel:
-        """Busca um responsável existente ou cria um novo."""
-        
-        # Buscar responsável existente
-        result = await session.execute(
-            select(Responsavel).where(Responsavel.nis_responsavel == nis)
-        )
-        responsavel = result.scalar_one_or_none()
-        
-        if responsavel:
-            if cpf and not responsavel.cpf_responsavel:
-                responsavel.cpf_responsavel = cpf
-            if nome and not responsavel.nome_responsavel:
-                responsavel.nome_responsavel = nome
-        else:
-            responsavel = Responsavel(
-                nis_responsavel=nis,
-                cpf_responsavel=cpf or None,
-                nome_responsavel=nome or None
-            )
-            session.add(responsavel)
-            self.stats['responsaveis_novos'] += 1
-        
-        return responsavel
-    
-    async def buscar_ou_criar_beneficiario(
-        self,
-        session: AsyncSession,
-        row: pd.Series
-    ) -> Optional[Beneficiario]:
-        """Busca um beneficiário existente ou cria um novo."""
-        
-        nis_beneficiario = row.get('nis_beneficiario', '').strip()
-        
-        if not nis_beneficiario:
-            return None
-        
-        # Buscar beneficiário existente
-        result = await session.execute(
-            select(Beneficiario).where(Beneficiario.nis_beneficiario == nis_beneficiario)
-        )
-        beneficiario = result.scalar_one_or_none()
-        
-        if beneficiario:
-            # Atualizar dados se necessário (opcional)
-            pass
-        else:
-            # Criar novo beneficiário
-            beneficiario = Beneficiario(
-                nis_beneficiario=nis_beneficiario,
-                cpf_beneficiario=row.get('cpf_beneficiario', None) or None,
-                nome_beneficiario=row.get('nome_beneficiario', None) or None,
-                uf=row.get('uf', None) or None,
-                codigo_ibge_municipio=int(row['codigo_ibge_municipio']) if row.get('codigo_ibge_municipio') and row['codigo_ibge_municipio'] != '' else None,
-                municipio=row.get('municipio', None) or None,
-                nis_responsavel=row.get('nis_responsavel', None) or None
-            )
-            session.add(beneficiario)
-            self.stats['beneficiarios_novos'] += 1
-        
-        return beneficiario
-    
-    async def criar_auxilio(
-        self,
-        session: AsyncSession,
-        row: pd.Series,
-        nis_beneficiario: str
-    ) -> Auxilio:
-        """Cria um novo registro de auxílio."""
-        
-        auxilio = Auxilio(
-            ano_mes=row.get('ano_mes', None) or None,
-            enquadramento=row.get('enquadramento', None) or None,
-            parcela=int(row['parcela']) if row.get('parcela') and row['parcela'] != '' else None,
-            observacao=row.get('observacao', None) or None,
-            valor=float(row['valor'].replace(',', '.')) if row.get('valor') and row['valor'] != '' else None,
-            nis_beneficiario=nis_beneficiario
-        )
-        
-        session.add(auxilio)
-        self.stats['auxilios_novos'] += 1
-        
-        return auxilio
-    
-    async def processar_linha(self, session: AsyncSession, row: pd.Series):
-        """Processa uma linha do CSV."""
-        
-        try:
-            # 1. Processar Responsável (se existir)
-            nis_responsavel = row.get('nis_responsavel', '').strip()
-            if nis_responsavel:
-                await self.buscar_ou_criar_responsavel(
-                    session,
-                    nis_responsavel,
-                    row.get('cpf_responsavel', ''),
-                    row.get('nome_responsavel', '')
-                )
-            
-            # 2. Processar Beneficiário
-            beneficiario = await self.buscar_ou_criar_beneficiario(session, row)
-            
-            if not beneficiario:
-                print(f"Aviso: NIS do beneficiário não encontrado na linha")
-                return
-            
-            # 3. Processar Auxílio
-            await self.criar_auxilio(session, row, beneficiario.nis_beneficiario)
-            
-        except Exception as e:
-            self.stats['erros'] += 1
-            print(f"Erro ao processar linha: {e}")
-            print(f"Dados da linha: {row.to_dict()}")
-            raise
-    
-    async def importar(self, batch_size: int = 100):
-        """Importa todos os dados do CSV para o banco."""
-        
-        if self.df is None:
-            self.carregar_csv()
-        
-        print("\nIniciando importação...")
-        
-        total_linhas = len(self.df)
-        
-        async with Session() as session:
-            for i in range(0, total_linhas, batch_size):
-                batch = self.df.iloc[i:i + batch_size]
-                
-                print(f"Processando lote {i // batch_size + 1} ({i + 1}-{min(i + batch_size, total_linhas)} de {total_linhas})...")
-                
-                for _, row in batch.iterrows():
-                    await self.processar_linha(session, row)
-                
-                # Commit em lotes
-                await session.commit()
-                print(f"Lote commitado com sucesso!")
-        
-        print("\n" + "="*50)
-        print("IMPORTAÇÃO CONCLUÍDA!")
-        print("="*50)
-        print(f"Responsáveis novos criados: {self.stats['responsaveis_novos']}")
-        print(f"Beneficiários novos criados: {self.stats['beneficiarios_novos']}")
-        print(f"Auxílios novos criados: {self.stats['auxilios_novos']}")
-        print(f"Erros encontrados: {self.stats['erros']}")
-        print("="*50)
+async def copy_from_dataframe(table_name: str, df: pd.DataFrame) -> None:
+    """
+    Realiza inserção em massa (bulk insert) de um DataFrame em uma tabela PostgreSQL via asyncpg COPY.
+    """
+    print(f"Inserindo dados na tabela '{table_name}' via asyncpg COPY...")
 
+    async with engine.begin() as conn:
+        raw_conn = await conn.get_raw_connection()
+        asyncpg_conn = raw_conn.driver_connection
+
+        records = [tuple(x) for x in df.to_numpy()]
+        columns = list(df.columns)
+
+        await asyncpg_conn.copy_records_to_table(
+            table_name,
+            records=records,
+            columns=columns
+        )
+
+        print(f"Inserção concluída com sucesso ({len(df)} linhas)")
+
+def prepare_dataframes(chunk: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Separa o DataFrame original em 3 DataFrames correspondentes às tabelas:
+    - Responsavel
+    - Beneficiario
+    - Auxilio
+    """
+    
+    df_responsavel = chunk[[
+        'nis_responsavel',
+        'cpf_responsavel',
+        'responsavel'
+    ]].copy()
+    
+    df_responsavel.rename(columns={'responsavel': 'nome_responsavel'}, inplace=True)
+    df_responsavel = df_responsavel[df_responsavel['nis_responsavel'] != '-2']
+    df_responsavel = df_responsavel.drop_duplicates(subset=['nis_responsavel'])
+    
+    df_responsavel = df_responsavel.astype(str)
+    
+    df_beneficiario = chunk[[
+        'nis_beneficiario',
+        'cpf_beneficiario',
+        'beneficiario',
+        'uf',
+        'codigo_ibge_municipio',
+        'municipio',
+        'nis_responsavel'
+    ]].copy()
+    
+    df_beneficiario.rename(columns={'beneficiario': 'nome_beneficiario'}, inplace=True)
+    df_beneficiario = df_beneficiario[df_beneficiario['nis_beneficiario'].notna()]
+    df_beneficiario = df_beneficiario.drop_duplicates(subset=['nis_beneficiario'])
+    
+    df_beneficiario['nis_beneficiario'] = df_beneficiario['nis_beneficiario'].astype(str)
+    df_beneficiario['cpf_beneficiario'] = df_beneficiario['cpf_beneficiario'].astype(str)
+    df_beneficiario['nome_beneficiario'] = df_beneficiario['nome_beneficiario'].astype(str)
+    df_beneficiario['uf'] = df_beneficiario['uf'].astype(str)
+    df_beneficiario['codigo_ibge_municipio'] = df_beneficiario['codigo_ibge_municipio'].astype(int)
+    df_beneficiario['municipio'] = df_beneficiario['municipio'].astype(str)
+    df_beneficiario['nis_responsavel'] = df_beneficiario['nis_responsavel'].astype(str)
+    
+    df_auxilio = chunk[[
+        'ano_mes',
+        'enquadramento',
+        'parcela',
+        'observacao',
+        'valor',
+        'nis_beneficiario'
+    ]].copy()
+    
+    df_auxilio = df_auxilio[df_auxilio['nis_beneficiario'].notna()]
+    
+    df_auxilio['ano_mes'] = df_auxilio['ano_mes'].astype(str)
+    df_auxilio['enquadramento'] = df_auxilio['enquadramento'].astype(str)
+    df_auxilio['parcela'] = df_auxilio['parcela'].astype(int)
+    df_auxilio['observacao'] = df_auxilio['observacao'].astype(str)
+    df_auxilio['valor'] = df_auxilio['valor'].astype(float)
+    df_auxilio['nis_beneficiario'] = df_auxilio['nis_beneficiario'].astype(str)
+    
+    return df_responsavel, df_beneficiario, df_auxilio
 
 async def main():
-    """Função principal para executar a importação."""
+    await create_tables()
+
+    print("Lendo CSV...")
+    csv_path = "dataset/auxilio_emergencial.csv"
+
+    chunk_size = 100_000
     
-    # Configurar o caminho do arquivo CSV
-    csv_path = "dados_auxilios.csv"  # ALTERE AQUI para o caminho do seu CSV
+    nis_responsaveis_inseridos = set()
+    nis_beneficiarios_inseridos = set()
     
-    importador = ImportadorCSV(csv_path)
+    for i, chunk in enumerate(pd.read_csv(csv_path, chunksize = chunk_size)):
+        print(f"\nProcessando chunk {i + 1}...")
+        
+        df_responsavel, df_beneficiario, df_auxilio = prepare_dataframes(chunk)
+        
+        df_responsavel = df_responsavel[
+            ~df_responsavel['nis_responsavel'].isin(nis_responsaveis_inseridos)
+        ]
+        nis_responsaveis_inseridos.update(df_responsavel['nis_responsavel'])
+        
+        df_beneficiario = df_beneficiario[
+            ~df_beneficiario['nis_beneficiario'].isin(nis_beneficiarios_inseridos)
+        ]
+        nis_beneficiarios_inseridos.update(df_beneficiario['nis_beneficiario'])
+        
+        if len(df_responsavel) > 0:
+            await copy_from_dataframe("responsavel", df_responsavel)
+        
+        if len(df_beneficiario) > 0:
+            await copy_from_dataframe("beneficiario", df_beneficiario)
+        
+        if len(df_auxilio) > 0:
+            await copy_from_dataframe("auxilio", df_auxilio)
     
-    # Carregar CSV
-    importador.carregar_csv()
+    print("\nInserindo responsável indefinido...")
+    df_indefinido = pd.DataFrame([{
+        'nis_responsavel': '-2',
+        'cpf_responsavel': ' ',
+        'nome_responsavel': 'responsavel indefinido'
+    }])
+    await copy_from_dataframe("responsavel", df_indefinido)
     
-    await importador.importar(batch_size=100)
+    print("\nImportação completa!")
 
 
 if __name__ == "__main__":
