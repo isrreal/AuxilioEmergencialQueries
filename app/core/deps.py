@@ -48,41 +48,28 @@ async def get_current_user(
         HTTPException: Se credenciais inválidas
     """
     credential_exception: HTTPException = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
+        status_code = status.HTTP_401_UNAUTHORIZED,
         detail="Não foi possível autenticar a credencial",
-        headers={"WWW-Authenticate": "Bearer"}
+        headers = {"WWW-Authenticate": "Bearer"}
     )
     
     try:
         payload = jwt.decode(
             token,
             settings.JWT_SECRET,
-            algorithms=[settings.ALGORITHM],
-            options={"verify_aud": False}
+            algorithms = [settings.ALGORITHM],
+            options = {"verify_aud": False}
         )
         username: str = payload.get("sub")
         
         if username is None:
             raise credential_exception
             
-        token_data: TokenData = TokenData(username=username)
+        token_data: TokenData = TokenData(username = username)
         
     except JWTError:
         raise credential_exception
-    
-    # Se você tiver modelo de usuário, descomente:
-    # async with db as session:
-    #     from app.models.usuario_model import UsuarioModel
-    #     query = select(UsuarioModel).filter(UsuarioModel.id == int(token_data.username))
-    #     result = await session.execute(query)
-    #     usuario = result.scalars().unique().one_or_none()
-    #     
-    #     if usuario is None:
-    #         raise credential_exception
-    #         
-    #     return usuario
-    
-    # Retorno temporário (remova quando tiver modelo de usuário)
+
     return {"id": token_data.username, "authenticated": True}
 
 
@@ -109,8 +96,8 @@ async def get_responsavel_or_404(
     
     if not responsavel:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Responsável com NIS {nis_responsavel} não encontrado"
+            status_code = status.HTTP_404_NOT_FOUND,
+            detail = f"Responsável com NIS {nis_responsavel} não encontrado"
         )
     
     return responsavel
@@ -139,8 +126,8 @@ async def get_beneficiario_or_404(
     
     if not beneficiario:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Beneficiário com NIS {nis_beneficiario} não encontrado"
+            status_code = status.HTTP_404_NOT_FOUND,
+            detail = f"Beneficiário com NIS {nis_beneficiario} não encontrado"
         )
     
     return beneficiario
@@ -174,17 +161,17 @@ def get_pagination_params(
     """
     if skip < 0:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="O parâmetro 'skip' deve ser maior ou igual a 0"
+            status_code = status.HTTP_400_BAD_REQUEST,
+            detail = "O parâmetro 'skip' deve ser maior ou igual a 0"
         )
     
     if limit < 1 or limit > 1000:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="O parâmetro 'limit' deve estar entre 1 e 1000"
+            status_code = status.HTTP_400_BAD_REQUEST,
+            detail = "O parâmetro 'limit' deve estar entre 1 e 1000"
         )
     
-    return PaginationParams(skip=skip, limit=limit)
+    return PaginationParams(skip = skip, limit = limit)
 
 
 class FilterParams(BaseModel):
@@ -218,14 +205,14 @@ def get_filter_params(
     """
     if uf and len(uf) != 2:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A UF deve ter exatamente 2 caracteres"
+            status_code = status.HTTP_400_BAD_REQUEST,
+            detail = "A UF deve ter exatamente 2 caracteres"
         )
     
     if ano_mes and (len(ano_mes) != 6 or not ano_mes.isdigit()):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="O parâmetro 'ano_mes' deve estar no formato YYYYMM (ex: 202401)"
+            status_code = status.HTTP_400_BAD_REQUEST,
+            detail = "O parâmetro 'ano_mes' deve estar no formato YYYYMM (ex: 202401)"
         )
     
-    return FilterParams(uf=uf, municipio=municipio, ano_mes=ano_mes)
+    return FilterParams(uf = uf, municipio = municipio, ano_mes = ano_mes)
