@@ -3,6 +3,8 @@ import pandas as pd
 from app.core.database import engine
 from app.core.configs import settings
 from typing import Set, Tuple
+from tqdm.asyncio import tqdm_asyncio  
+from tqdm import tqdm
 
 async def create_tables() -> None:
     import app.models.__all_models
@@ -31,8 +33,8 @@ async def copy_from_dataframe(table_name: str, df: pd.DataFrame) -> None:
 
         await asyncpg_conn.copy_records_to_table(
             table_name,
-            records=records,
-            columns=columns
+            records = records,
+            columns = columns
         )
 
         print(f"Inserção concluída com sucesso ({len(df)} linhas)")
@@ -52,9 +54,9 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
         'responsavel'
     ]].copy()
     
-    df_responsavel.rename(columns={'responsavel': 'nome_responsavel'}, inplace = True)
+    df_responsavel.rename(columns ={'responsavel': 'nome_responsavel'}, inplace = True)
     df_responsavel = df_responsavel[df_responsavel['nis_responsavel'] != '-2']
-    df_responsavel = df_responsavel.drop_duplicates(subset=['nis_responsavel'])
+    df_responsavel = df_responsavel.drop_duplicates(subset = ['nis_responsavel'])
     
     df_responsavel['nis_responsavel'] = df_responsavel['nis_responsavel'].astype(float).astype(int).astype(str)
     df_responsavel['cpf_responsavel'] = df_responsavel['cpf_responsavel'].astype(str)
@@ -71,7 +73,7 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
         'nis_responsavel'
     ]].copy()
     
-    df_beneficiario.rename(columns={'beneficiario': 'nome_beneficiario'}, inplace=True)
+    df_beneficiario.rename(columns = {'beneficiario': 'nome_beneficiario'}, inplace = True)
     df_beneficiario = df_beneficiario[df_beneficiario['nis_beneficiario'].notna()]
     df_beneficiario = df_beneficiario.drop_duplicates(subset = ['nis_beneficiario'])
     
@@ -111,13 +113,19 @@ async def main():
     print("Lendo CSV...")
     csv_path = "dataset/auxilio_emergencial.csv"
 
-    chunk_size = 100_000
+    chunk_size = 200_000
+    total_rows = 257_170_290
     
     nis_responsaveis_inseridos: Set = set()
     nis_beneficiarios_inseridos: Set = set()
     
-    for i, chunk in enumerate(pd.read_csv(csv_path, chunksize = chunk_size)):
-        print(f"\nProcessando chunk {i + 1}...")
+    total_responsavel = 0
+    total_beneficiario = 0
+    total_auxilio = 0
+    
+    n_chunks = total_rows // chunk_size + (1 if total_rows % chunk_size else 0)
+    
+    for i, chunk in enumerate(tqdm(pd.read_csv(csv_path, chunksize = chunk_size), total = n_chunks, desc = "Processando chunks")):
         
         df_responsavel, df_beneficiario, df_auxilio = prepare_dataframes(chunk)
         
@@ -133,23 +141,31 @@ async def main():
         
         if len(df_responsavel) > 0:
             await copy_from_dataframe("responsavel", df_responsavel)
+            total_responsavel += len(df_responsavel)
         
         if len(df_beneficiario) > 0:
             await copy_from_dataframe("beneficiario", df_beneficiario)
+            total_beneficiario += len(df_beneficiario)
         
         if len(df_auxilio) > 0:
             await copy_from_dataframe("auxilio", df_auxilio)
+            total_auxilio += len(df_auxilio)
+        
+        tqdm.write(
+            f"Acumulado - Responsavel: {total_responsavel}, "
+            f"Beneficiario: {total_beneficiario}, Auxilio: {total_auxilio}"
+        )
     
     print("\nInserindo responsável indefinido...")
-    df_indefinido = pd.DataFrame([{
+    df_indefinido: pd.DataFrame = pd.DataFrame([{
         'nis_responsavel': '-2',
         'cpf_responsavel': ' ',
         'nome_responsavel': 'responsavel indefinido'
     }])
+
     await copy_from_dataframe("responsavel", df_indefinido)
+    total_responsavel += 1
     
-    print("\nImportação completa!")
-
-
+    print(f"\nImportação completa!\nTotais - Responsavel: {total_responsavel}, Beneficiario: {total_beneficiario}, Auxilio: {total_auxilio}")
 if __name__ == "__main__":
     asyncio.run(main())

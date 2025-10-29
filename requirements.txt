@@ -30,3 +30,6 @@ python-multipart
 
 pydantic==2.5.0
 pydantic-settings==2.1.0
+
+tqdm>=4.65.0
+
