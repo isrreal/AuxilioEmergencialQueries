@@ -32,78 +32,65 @@ class AuxilioBase(BaseModel):
 
 
 # ---------------------------
-# Create Schemas (para POST)
+# Response Schemas SIMPLES (para listagens)
 # ---------------------------
 
-class ResponsavelCreate(ResponsavelBase):
-    pass
-
-
-class BeneficiarioCreate(BeneficiarioBase):
-    pass
-
-
-class AuxilioCreate(AuxilioBase):
-    pass
-
-
-# ---------------------------
-# Response Schemas (com ORM)
-# ---------------------------
-
-class AuxilioResponse(AuxilioBase):
-    id: int
-
-    # Pydantic v2
-    model_config = ConfigDict(from_attributes=True)
-    
-    # OU se estiver usando Pydantic v1, use:
-    # class Config:
-    #     orm_mode = True
-
-
-class BeneficiarioResponse(BeneficiarioBase):
-    auxilios: List[AuxilioResponse] = []
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class ResponsavelResponse(ResponsavelBase):
-    beneficiarios: List[BeneficiarioResponse] = []
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-# ---------------------------
-# Schemas adicionais úteis
-# ---------------------------
-
-class AuxilioSummary(BaseModel):
-    """Resumo de auxílios (sem relações)."""
+class AuxilioListResponse(BaseModel):
+    """Auxílio para listagem (SEM relacionamentos)."""
     id: int
     ano_mes: Optional[str] = None
-    valor: Optional[float] = None
+    enquadramento: Optional[str] = None
     parcela: Optional[int] = None
+    observacao: Optional[str] = None
+    valor: Optional[float] = None
+    nis_beneficiario: Optional[str] = None
     
     model_config = ConfigDict(from_attributes=True)
 
 
-class BeneficiarioSummary(BaseModel):
-    """Resumo de beneficiário (sem relações completas)."""
+class BeneficiarioListResponse(BaseModel):
+    """Beneficiário para listagem (SEM relacionamentos)."""
     nis_beneficiario: str
+    cpf_beneficiario: Optional[str] = None
     nome_beneficiario: Optional[str] = None
-    municipio: Optional[str] = None
     uf: Optional[str] = None
-    total_auxilios: int = 0
-    valor_total: float = 0.0
+    codigo_ibge_municipio: Optional[int] = None
+    municipio: Optional[str] = None
+    nis_responsavel: Optional[str] = None
     
     model_config = ConfigDict(from_attributes=True)
 
 
-class ResponsavelSummary(BaseModel):
-    """Resumo de responsável (sem relações completas)."""
+class ResponsavelListResponse(BaseModel):
+    """Responsável para listagem (SEM relacionamentos)."""
     nis_responsavel: str
+    cpf_responsavel: Optional[str] = None
     nome_responsavel: Optional[str] = None
-    total_beneficiarios: int = 0
     
-    model_config = ConfigDict(from_attributes = True)
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------
+# Response Schemas COMPLETOS (para detalhes de 1 registro)
+# ---------------------------
+
+class AuxilioDetailResponse(AuxilioBase):
+    """Detalhes de UM auxílio (com beneficiário)."""
+    id: int
+    beneficiario: Optional[BeneficiarioListResponse] = None  # ← Shallow
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BeneficiarioDetailResponse(BeneficiarioBase):
+    """Detalhes de UM beneficiário (com auxílios)."""
+    auxilios: List[AuxilioListResponse] = []  # ← Shallow
+    responsavel: Optional[ResponsavelListResponse] = None  # ← Shallow
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ResponsavelDetailResponse(ResponsavelBase):
+    """Detalhes de UM responsável (com beneficiários)."""
+    beneficiarios: List[BeneficiarioListResponse] = []  
+    model_config = ConfigDict(from_attributes=True)

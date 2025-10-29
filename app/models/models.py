@@ -1,9 +1,9 @@
 from sqlalchemy import Column, String, Integer, Float, Text, ForeignKey
 from sqlalchemy.orm import relationship
-from app.core.database import Base
+from app.core.configs import settings
 
 
-class Responsavel(Base):
+class Responsavel(settings.DBBaseModel):
     __tablename__ = "responsavel"
 
     nis_responsavel = Column(String, primary_key = True)
@@ -13,7 +13,7 @@ class Responsavel(Base):
     beneficiarios = relationship("Beneficiario", back_populates = "responsavel")
 
 
-class Beneficiario(Base):
+class Beneficiario(settings.DBBaseModel):
     __tablename__ = "beneficiario"
 
     nis_beneficiario = Column(String, primary_key = True)
@@ -28,7 +28,7 @@ class Beneficiario(Base):
     auxilios = relationship("Auxilio", back_populates = "beneficiario")
 
 
-class Auxilio(Base):
+class Auxilio(settings.DBBaseModel):
     __tablename__ = "auxilio"
 
     id = Column(Integer, primary_key = True, autoincrement = True)
