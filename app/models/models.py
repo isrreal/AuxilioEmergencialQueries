@@ -1,4 +1,12 @@
-from sqlalchemy import Column, String, Integer, Float, Text, ForeignKey
+from sqlalchemy import (
+    Column, 
+    String, 
+    Integer, 
+    Float, 
+    Text, 
+    ForeignKey, 
+    Boolean
+)
 from sqlalchemy.orm import relationship
 from app.core.configs import settings
 
@@ -40,3 +48,13 @@ class Auxilio(settings.DBBaseModel):
     nis_beneficiario = Column(String, ForeignKey("beneficiario.nis_beneficiario"))
 
     beneficiario = relationship("Beneficiario", back_populates = "auxilios")
+
+class UsuarioModel(settings.DBBaseModel):
+    __tablename__ = "usuarios"
+
+    id = Column(Integer, primary_key = True, autoincrement = True)
+    nome = Column(String(256), nullable = True)
+    sobrenome = Column(String(256), index = True, nullable = True)
+    email = Column(String(256), index = True, nullable = False, unique = True)
+    senha = Column(String(256), nullable = False)
+    eh_admin = Column(Boolean, default = False)
