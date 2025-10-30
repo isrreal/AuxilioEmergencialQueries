@@ -49,7 +49,7 @@ class Auxilio(settings.DBBaseModel):
 
     beneficiario = relationship("Beneficiario", back_populates = "auxilios")
 
-class UsuarioModel(settings.DBBaseModel):
+class Usuario(settings.DBBaseModel):
     __tablename__ = "usuarios"
 
     id = Column(Integer, primary_key = True, autoincrement = True)
