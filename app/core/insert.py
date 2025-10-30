@@ -3,8 +3,8 @@ import pandas as pd
 from app.core.database import engine
 from app.core.configs import settings
 from typing import Set, Tuple
-from tqdm.asyncio import tqdm_asyncio  
 from tqdm import tqdm
+import numpy as np
 
 async def create_tables() -> None:
     import app.models.__all_models
@@ -39,13 +39,10 @@ async def copy_from_dataframe(table_name: str, df: pd.DataFrame) -> None:
 
         print(f"Inserção concluída com sucesso ({len(df)} linhas)")
 
-
 def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Separa o DataFrame original em 3 DataFrames correspondentes às tabelas:
-    - Responsavel
-    - Beneficiario
-    - Auxilio
+    Separa e limpa o DataFrame em 3 DataFrames prontos para o banco.
+    Assume que 'dtype' foi usado no pd.read_csv para colunas de string/ID.
     """
     
     df_responsavel = chunk[[
@@ -53,15 +50,10 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
         'cpf_responsavel',
         'responsavel'
     ]].copy()
-    
-    df_responsavel.rename(columns ={'responsavel': 'nome_responsavel'}, inplace = True)
+    df_responsavel.rename(columns={'responsavel': 'nome_responsavel'}, inplace=True)
     df_responsavel = df_responsavel[df_responsavel['nis_responsavel'] != '-2']
-    df_responsavel = df_responsavel.drop_duplicates(subset = ['nis_responsavel'])
-    
-    df_responsavel['nis_responsavel'] = df_responsavel['nis_responsavel'].astype(float).astype(int).astype(str)
-    df_responsavel['cpf_responsavel'] = df_responsavel['cpf_responsavel'].astype(str)
-    df_responsavel['nome_responsavel'] = df_responsavel['nome_responsavel'].astype(str)
-    
+    df_responsavel = df_responsavel.drop_duplicates(subset=['nis_responsavel'])
+        
     
     df_beneficiario = chunk[[
         'nis_beneficiario',
@@ -72,19 +64,12 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
         'municipio',
         'nis_responsavel'
     ]].copy()
-    
-    df_beneficiario.rename(columns = {'beneficiario': 'nome_beneficiario'}, inplace = True)
+    df_beneficiario.rename(columns={'beneficiario': 'nome_beneficiario'}, inplace = True)
     df_beneficiario = df_beneficiario[df_beneficiario['nis_beneficiario'].notna()]
-    df_beneficiario = df_beneficiario.drop_duplicates(subset = ['nis_beneficiario'])
+    df_beneficiario = df_beneficiario.drop_duplicates(subset=['nis_beneficiario'])
     
-    df_beneficiario['nis_beneficiario'] = df_beneficiario['nis_beneficiario'].astype(float).astype(int).astype(str)
-    df_beneficiario['cpf_beneficiario'] = df_beneficiario['cpf_beneficiario'].astype(str)
-    df_beneficiario['nome_beneficiario'] = df_beneficiario['nome_beneficiario'].astype(str)
-    df_beneficiario['uf'] = df_beneficiario['uf'].astype(str)
     df_beneficiario['codigo_ibge_municipio'] = df_beneficiario['codigo_ibge_municipio'].astype(int)
-    df_beneficiario['municipio'] = df_beneficiario['municipio'].astype(str)
-    df_beneficiario['nis_responsavel'] = df_beneficiario['nis_responsavel'].astype(float).astype(int).astype(str)
-    
+
     
     df_auxilio = chunk[[
         'ano_mes',
@@ -94,38 +79,68 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
         'valor',
         'nis_beneficiario'
     ]].copy()
-    
     df_auxilio = df_auxilio[df_auxilio['nis_beneficiario'].notna()]
     
-    df_auxilio['ano_mes'] = df_auxilio['ano_mes'].astype(str)
-    df_auxilio['enquadramento'] = df_auxilio['enquadramento'].astype(str)
     df_auxilio['parcela'] = df_auxilio['parcela'].astype(int)
-    df_auxilio['observacao'] = df_auxilio['observacao'].astype(str)
     df_auxilio['valor'] = df_auxilio['valor'].astype(float)
-    df_auxilio['nis_beneficiario'] = df_auxilio['nis_beneficiario'].astype(float).astype(int).astype(str)
     
+    df_responsavel = df_responsavel.replace({pd.NA: None, np.nan: None})
+    df_beneficiario = df_beneficiario.replace({pd.NA: None, np.nan: None})
+    df_auxilio = df_auxilio.replace({pd.NA: None, np.nan: None})
+
     return df_responsavel, df_beneficiario, df_auxilio
 
 
 async def main():
     await create_tables()
 
+    print("\nInserindo responsável indefinido...")
+    df_indefinido: pd.DataFrame = pd.DataFrame([{
+        'nis_responsavel': '-2',
+        'cpf_responsavel': ' ',
+        'nome_responsavel': 'responsavel indefinido'
+    }])
+
+    await copy_from_dataframe("responsavel", df_indefinido)
+
     print("Lendo CSV...")
     csv_path = "dataset/auxilio_emergencial.csv"
 
     chunk_size = 200_000
-    total_rows = 257_170_290
+    # total_rows = 257_170_290
+    total_rows_to_process = 1_000_000 
     
     nis_responsaveis_inseridos: Set = set()
     nis_beneficiarios_inseridos: Set = set()
     
-    total_responsavel = 0
+    total_responsavel = 1 
     total_beneficiario = 0
     total_auxilio = 0
     
-    n_chunks = total_rows // chunk_size + (1 if total_rows % chunk_size else 0)
+    n_chunks = total_rows_to_process // chunk_size + (1 if total_rows_to_process % chunk_size else 0)
+
+    column_types = {
+        'nis_responsavel': 'str',
+        'cpf_responsavel': 'str',
+        'responsavel': 'str',
+        'nis_beneficiario': 'str',
+        'cpf_beneficiario': 'str',
+        'beneficiario': 'str',
+        'uf': 'str',
+        'municipio': 'str',
+        'ano_mes': 'str',
+        'enquadramento': 'str',
+        'observacao': 'str'
+    }
+
+    csv_iterator = pd.read_csv(
+        csv_path, 
+        chunksize = chunk_size, 
+        nrows = total_rows_to_process,
+        dtype = column_types
+    )
     
-    for i, chunk in enumerate(tqdm(pd.read_csv(csv_path, chunksize = chunk_size), total = n_chunks, desc = "Processando chunks")):
+    for i, chunk in enumerate(tqdm(csv_iterator, total = n_chunks, desc = "Processando chunks")):
         
         df_responsavel, df_beneficiario, df_auxilio = prepare_dataframes(chunk)
         
@@ -156,16 +171,7 @@ async def main():
             f"Beneficiario: {total_beneficiario}, Auxilio: {total_auxilio}"
         )
     
-    print("\nInserindo responsável indefinido...")
-    df_indefinido: pd.DataFrame = pd.DataFrame([{
-        'nis_responsavel': '-2',
-        'cpf_responsavel': ' ',
-        'nome_responsavel': 'responsavel indefinido'
-    }])
-
-    await copy_from_dataframe("responsavel", df_indefinido)
-    total_responsavel += 1
-    
     print(f"\nImportação completa!\nTotais - Responsavel: {total_responsavel}, Beneficiario: {total_beneficiario}, Auxilio: {total_auxilio}")
+
 if __name__ == "__main__":
     asyncio.run(main())
