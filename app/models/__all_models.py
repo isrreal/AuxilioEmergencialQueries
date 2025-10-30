@@ -1,1 +1,1 @@
-from app.models.models import Auxilio, Beneficiario, Responsavel
+from app.models.models import Auxilio, Beneficiario, Responsavel, Usuario
