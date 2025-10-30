@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm.decl_api import DeclarativeMeta
 from typing import List
+import os
 
 class Settings(BaseSettings):
     """
@@ -20,6 +21,9 @@ class Settings(BaseSettings):
     DB_ECHO: bool = False  
     
     DBBaseModel: ClassVar[DeclarativeMeta] = declarative_base()
+
+    ADMIN_USER: str = os.getenv("ADMIN_USER")
+    ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD")
     
     JWT_SECRET: str = 'LOB-VggKMl1pDElBfgQsbFq1w72x1aCswhbaayFthEQ'
     ALGORITHM: str = 'HS256'
@@ -64,4 +68,4 @@ class Settings(BaseSettings):
         """Verifica se está em ambiente de desenvolvimento."""
         return 'localhost' in self.DATABASE_URL or '127.0.0.1' in self.DATABASE_URL
 
-settings = Settings()
+settings: Settings = Settings()
