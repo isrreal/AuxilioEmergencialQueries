@@ -10,14 +10,14 @@ from pydantic import EmailStr
 from app.core.configs import settings
 from app.core.security import verificar_senha
 
-from app.models.models import UsuarioModel
+from app.models.models import Usuario
 
 
 oauth2_schema = OAuth2PasswordBearer(
     tokenUrl = f"{settings.API_V1_STR}/auth/login"
 )
 
-async def autenticar(email: EmailStr, senha: str, db: AsyncSession) -> Optional[UsuarioModel]:
+async def autenticar(email: EmailStr, senha: str, db: AsyncSession) -> Optional[Usuario]:
     """
     Verifica as credenciais de um usuário no banco de dados.
 
@@ -30,14 +30,14 @@ async def autenticar(email: EmailStr, senha: str, db: AsyncSession) -> Optional[
         db (AsyncSession): A sessão assíncrona do SQLAlchemy para consulta.
 
     Returns:
-        Optional[UsuarioModel]: O objeto `UsuarioModel` correspondente se
+        Optional[Usuario]: O objeto `Usuario` correspondente se
             as credenciais estiverem corretas. Retorna `None` caso o email
             não seja encontrado ou a senha esteja incorreta.
     """
     async with db as session:
-        query = select(UsuarioModel).filter(UsuarioModel.email == email)
+        query = select(Usuario).filter(Usuario.email == email)
         result = await session.execute(query)
-        usuario: UsuarioModel = result.scalars().unique().one_or_none()
+        usuario: Usuario = result.scalars().unique().one_or_none()
         
         if not usuario:
             return None
