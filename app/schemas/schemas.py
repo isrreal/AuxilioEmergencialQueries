@@ -25,6 +25,13 @@ class AuxilioBase(BaseModel):
     valor: float | None = None
     nis_beneficiario: str | None = None
 
+class BeneficiarioCreate(BeneficiarioBase):
+    """
+    Schema para a criação de um novo beneficiário.
+    Herda de BeneficiarioBase mas torna campos-chave obrigatórios.
+    """
+    
+    nis_responsavel: str
 
 class AuxilioListResponse(BaseModel):
     """Auxílio para listagem (SEM relacionamentos)."""
