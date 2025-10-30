@@ -1,21 +1,49 @@
 import asyncio
 import pandas as pd
-from app.core.database import engine
+from app.core.database import engine, Session
 from app.core.configs import settings
 from typing import Set, Tuple
 from tqdm import tqdm
 import numpy as np
+from app.models.models import Usuario
+from sqlalchemy import select
+from app.core.security import gerar_hash_senha 
 
 async def create_tables() -> None:
     import app.models.__all_models
 
     print("Criando as tabelas do banco de dados...")
 
-    async with engine.begin() as conn:
-        await conn.run_sync(settings.DBBaseModel.metadata.drop_all)
-        await conn.run_sync(settings.DBBaseModel.metadata.create_all)
+    async with engine.begin() as db:
+        await db.run_sync(settings.DBBaseModel.metadata.drop_all)
+        await db.run_sync(settings.DBBaseModel.metadata.create_all)
 
     print("Tabelas criadas com sucesso")
+
+async def insert_admin():
+    """
+    Insere o usuário administrador root no banco se ele ainda não existir.
+    """
+    async with Session() as db:
+        query = select(Usuario).where(Usuario.email == settings.ADMIN_USER)
+        result = await db.execute(query)
+        existing_user = result.scalar_one_or_none()
+
+        if existing_user:
+            print("Usuário administrador já existe.")
+            return
+
+        admin_user = Usuario(
+            nome = "administrador",
+            sobrenome = "administrador",
+            email = settings.ADMIN_USER,
+            senha = gerar_hash_senha(settings.ADMIN_PASSWORD),
+            eh_admin = True
+        )
+
+        db.add(admin_user)
+        await db.commit()
+        print("Usuário administrador criado com sucesso!")
 
 
 async def copy_from_dataframe(table_name: str, df: pd.DataFrame) -> None:
@@ -24,8 +52,8 @@ async def copy_from_dataframe(table_name: str, df: pd.DataFrame) -> None:
     """
     print(f"Inserindo dados na tabela '{table_name}' via asyncpg COPY...")
 
-    async with engine.begin() as conn:
-        raw_conn = await conn.get_raw_connection()
+    async with engine.begin() as db:
+        raw_conn = await db.get_raw_connection()
         asyncpg_conn = raw_conn.driver_connection
 
         records = [tuple(x) for x in df.to_numpy()]
@@ -50,9 +78,9 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
         'cpf_responsavel',
         'responsavel'
     ]].copy()
-    df_responsavel.rename(columns={'responsavel': 'nome_responsavel'}, inplace=True)
+    df_responsavel.rename(columns = {'responsavel': 'nome_responsavel'}, inplace = True)
     df_responsavel = df_responsavel[df_responsavel['nis_responsavel'] != '-2']
-    df_responsavel = df_responsavel.drop_duplicates(subset=['nis_responsavel'])
+    df_responsavel = df_responsavel.drop_duplicates(subset = ['nis_responsavel'])
         
     
     df_beneficiario = chunk[[
@@ -64,13 +92,12 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
         'municipio',
         'nis_responsavel'
     ]].copy()
-    df_beneficiario.rename(columns={'beneficiario': 'nome_beneficiario'}, inplace = True)
+    df_beneficiario.rename(columns = {'beneficiario': 'nome_beneficiario'}, inplace = True)
     df_beneficiario = df_beneficiario[df_beneficiario['nis_beneficiario'].notna()]
-    df_beneficiario = df_beneficiario.drop_duplicates(subset=['nis_beneficiario'])
+    df_beneficiario = df_beneficiario.drop_duplicates(subset = ['nis_beneficiario'])
     
     df_beneficiario['codigo_ibge_municipio'] = df_beneficiario['codigo_ibge_municipio'].astype(int)
 
-    
     df_auxilio = chunk[[
         'ano_mes',
         'enquadramento',
@@ -79,6 +106,7 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
         'valor',
         'nis_beneficiario'
     ]].copy()
+
     df_auxilio = df_auxilio[df_auxilio['nis_beneficiario'].notna()]
     
     df_auxilio['parcela'] = df_auxilio['parcela'].astype(int)
@@ -90,9 +118,9 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
 
     return df_responsavel, df_beneficiario, df_auxilio
 
-
 async def main():
     await create_tables()
+    await insert_admin()
 
     print("\nInserindo responsável indefinido...")
     df_indefinido: pd.DataFrame = pd.DataFrame([{
@@ -108,7 +136,7 @@ async def main():
 
     chunk_size = 200_000
     # total_rows = 257_170_290
-    total_rows_to_process = 1_000_000 
+    total_rows_to_process = 10_000_000 
     
     nis_responsaveis_inseridos: Set = set()
     nis_beneficiarios_inseridos: Set = set()
