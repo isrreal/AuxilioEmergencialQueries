@@ -136,7 +136,7 @@ async def main():
 
     chunk_size = 200_000
     # total_rows = 257_170_290
-    total_rows_to_process = 10_000_000 
+    total_rows_to_process = 50_000_000 
     
     nis_responsaveis_inseridos: Set = set()
     nis_beneficiarios_inseridos: Set = set()
