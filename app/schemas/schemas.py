@@ -1,96 +1,90 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Optional, List
-
-
-# ---------------------------
-# Base Schemas
-# ---------------------------
+from typing import List
 
 class ResponsavelBase(BaseModel):
     nis_responsavel: str
-    cpf_responsavel: Optional[str] = None
-    nome_responsavel: Optional[str] = None
+    cpf_responsavel: str | None = None
+    nome_responsavel: str | None = None
 
 
 class BeneficiarioBase(BaseModel):
     nis_beneficiario: str
-    cpf_beneficiario: Optional[str] = None
-    nome_beneficiario: Optional[str] = None
-    uf: Optional[str] = None
-    codigo_ibge_municipio: Optional[int] = None
-    municipio: Optional[str] = None
-    nis_responsavel: Optional[str] = None
+    cpf_beneficiario: str | None = None
+    nome_beneficiario: str | None = None
+    uf: str | None = None
+    codigo_ibge_municipio: int | None = None
+    municipio: str | None = None
+    nis_responsavel: str | None = None
 
 
 class AuxilioBase(BaseModel):
-    ano_mes: Optional[str] = None
-    enquadramento: Optional[str] = None
-    parcela: Optional[int] = None
-    observacao: Optional[str] = None
-    valor: Optional[float] = None
-    nis_beneficiario: Optional[str] = None
+    ano_mes: str | None = None
+    enquadramento: str | None = None
+    parcela: int | None = None
+    observacao: str | None = None
+    valor: float | None = None
+    nis_beneficiario: str | None = None
 
-
-# ---------------------------
-# Response Schemas SIMPLES (para listagens)
-# ---------------------------
 
 class AuxilioListResponse(BaseModel):
     """Auxílio para listagem (SEM relacionamentos)."""
     id: int
-    ano_mes: Optional[str] = None
-    enquadramento: Optional[str] = None
-    parcela: Optional[int] = None
-    observacao: Optional[str] = None
-    valor: Optional[float] = None
-    nis_beneficiario: Optional[str] = None
+    ano_mes: str | None = None
+    enquadramento: str | None = None
+    parcela: int | None = None
+    observacao: str | None = None
+    valor: float | None = None
+    nis_beneficiario: str | None = None
     
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes = True)
 
 
 class BeneficiarioListResponse(BaseModel):
     """Beneficiário para listagem (SEM relacionamentos)."""
     nis_beneficiario: str
-    cpf_beneficiario: Optional[str] = None
-    nome_beneficiario: Optional[str] = None
-    uf: Optional[str] = None
-    codigo_ibge_municipio: Optional[int] = None
-    municipio: Optional[str] = None
-    nis_responsavel: Optional[str] = None
+    cpf_beneficiario: str | None = None
+    nome_beneficiario: str | None = None
+    uf: str | None = None
+    codigo_ibge_municipio: int | None = None
+    municipio: str | None = None
+    nis_responsavel: str | None = None
     
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes = True)
 
 
 class ResponsavelListResponse(BaseModel):
     """Responsável para listagem (SEM relacionamentos)."""
     nis_responsavel: str
-    cpf_responsavel: Optional[str] = None
-    nome_responsavel: Optional[str] = None
+    cpf_responsavel: str | None = None
+    nome_responsavel: str | None = None
     
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes = True)
 
-
-# ---------------------------
-# Response Schemas COMPLETOS (para detalhes de 1 registro)
-# ---------------------------
 
 class AuxilioDetailResponse(AuxilioBase):
     """Detalhes de UM auxílio (com beneficiário)."""
     id: int
-    beneficiario: Optional[BeneficiarioListResponse] = None  # ← Shallow
+    beneficiario: BeneficiarioListResponse | None = None  
     
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes = True)
 
 
 class BeneficiarioDetailResponse(BeneficiarioBase):
     """Detalhes de UM beneficiário (com auxílios)."""
-    auxilios: List[AuxilioListResponse] = []  # ← Shallow
-    responsavel: Optional[ResponsavelListResponse] = None  # ← Shallow
+    auxilios: List[AuxilioListResponse] = []
+    responsavel: ResponsavelListResponse | None = None  
     
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes = True)
 
 
 class ResponsavelDetailResponse(ResponsavelBase):
     """Detalhes de UM responsável (com beneficiários)."""
-    beneficiarios: List[BeneficiarioListResponse] = []  
-    model_config = ConfigDict(from_attributes=True)
+    beneficiarios: List[BeneficiarioListResponse] = []
+    
+    model_config = ConfigDict(from_attributes = True)
+
+
+class TotalGastoResponse(BaseModel):
+    total: float | None 
+
+    model_config = ConfigDict(from_attributes = True)
