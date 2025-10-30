@@ -37,6 +37,7 @@ services:
   app_runner:
     build: .
     container_name: emergencial_aid_runner
+    command: streamlit run dashboard.py --server.address=0.0.0.0 --server.port=8501
     volumes:
       - .:/app
       - ./dataset:/data         
@@ -48,6 +49,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    ports:
+      - "8501:8501"
+
 
 volumes:
   postgres_data:
