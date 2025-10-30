@@ -1,65 +1,51 @@
 from pytz import timezone
-from typing import Optional
+from typing import Optional, Dict
 from datetime import datetime, timedelta
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from jose import jwt
+from pydantic import EmailStr
 
 from app.core.configs import settings
 from app.core.security import verificar_senha
 
-# Se você tiver modelo de usuário, descomente:
-# from app.models.usuario_model import UsuarioModel
+from app.models.models import UsuarioModel
 
 
-# OAuth2 scheme para extrair token do header Authorization
 oauth2_schema = OAuth2PasswordBearer(
-    tokenUrl=f"{settings.API_V1_STR}/auth/login"
+    tokenUrl = f"{settings.API_V1_STR}/auth/login"
 )
 
+async def autenticar(email: EmailStr, senha: str, db: AsyncSession) -> Optional[UsuarioModel]:
+    """
+    Verifica as credenciais de um usuário no banco de dados.
 
-async def autenticar(
-    email: str, 
-    senha: str, 
-    db: AsyncSession
-) -> Optional[dict]:
-    """
-    Autentica um usuário verificando email e senha.
-    
+    Busca um usuário pelo email e compara a senha fornecida (em texto plano)
+    com o hash armazenado no banco de dados usando a função `verificar_senha`.
+
     Args:
-        email: Email do usuário
-        senha: Senha em texto plano
-        db: Sessão do banco de dados
-        
+        email (EmailStr): O email do usuário a ser autenticado.
+        senha (str): A senha em texto plano a ser verificada.
+        db (AsyncSession): A sessão assíncrona do SQLAlchemy para consulta.
+
     Returns:
-        dict ou UsuarioModel: Dados do usuário autenticado ou None se falhar
+        Optional[UsuarioModel]: O objeto `UsuarioModel` correspondente se
+            as credenciais estiverem corretas. Retorna `None` caso o email
+            não seja encontrado ou a senha esteja incorreta.
     """
-    
-    # VERSÃO SEM MODELO DE USUÁRIO (temporária)
-    # Remove isso quando tiver o modelo UsuarioModel
-    if email == "admin@example.com" and senha == "admin123":
-        return {
-            "id": 1,
-            "email": email,
-            "nome": "Admin",
-            "eh_admin": True
-        }
-    return None
-    
-    # VERSÃO COM MODELO DE USUÁRIO (descomente quando tiver)
-    # async with db as session:
-    #     query = select(UsuarioModel).filter(UsuarioModel.email == email)
-    #     result = await session.execute(query)
-    #     usuario: UsuarioModel = result.scalars().unique().one_or_none()
-    #     
-    #     if not usuario:
-    #         return None
-    #     
-    #     if not verificar_senha(senha, usuario.senha):
-    #         return None
-    #     
-    #     return usuario
+    async with db as session:
+        query = select(UsuarioModel).filter(UsuarioModel.email == email)
+        result = await session.execute(query)
+        usuario: UsuarioModel = result.scalars().unique().one_or_none()
+        
+        if not usuario:
+            return None
+        if not verificar_senha(senha, usuario.senha):
+            return None
+
+        return usuario
+
 
 
 def _criar_token(tipo_token: str, tempo_vida: timedelta, sub: str) -> str:
@@ -74,21 +60,20 @@ def _criar_token(tipo_token: str, tempo_vida: timedelta, sub: str) -> str:
     Returns:
         str: Token JWT codificado
     """
-    # Timezone de Fortaleza (ou use UTC para padrão internacional)
     fortaleza = timezone("America/Fortaleza")
-    expira = datetime.now(tz=fortaleza) + tempo_vida
+    expira = datetime.now(tz = fortaleza) + tempo_vida
     
     payload = {
         "type": tipo_token,
         "exp": expira,
-        "iat": datetime.now(tz=fortaleza),
+        "iat": datetime.now(tz = fortaleza),
         "sub": str(sub),
     }
     
     return jwt.encode(
         payload, 
         settings.JWT_SECRET, 
-        algorithm=settings.ALGORITHM
+        algorithm = settings.ALGORITHM
     )
 
 
@@ -103,9 +88,9 @@ def criar_token_acesso(sub: str) -> str:
         str: Token de acesso JWT
     """
     return _criar_token(
-        tipo_token="access_token",
-        tempo_vida=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
-        sub=sub
+        tipo_token = "access_token",
+        tempo_vida = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+        sub = sub
     )
 
 
@@ -120,9 +105,9 @@ def criar_token_refresh(sub: str) -> str:
         str: Token de refresh JWT
     """
     return _criar_token(
-        tipo_token="refresh_token",
-        tempo_vida=timedelta(days=30),  # 30 dias
-        sub=sub
+        tipo_token = "refresh_token",
+        tempo_vida = timedelta(days = 30), 
+        sub = sub
     )
 
 
@@ -142,14 +127,11 @@ def decodificar_token(token: str) -> dict:
     return jwt.decode(
         token,
         settings.JWT_SECRET,
-        algorithms=[settings.ALGORITHM],
-        options={"verify_aud": False}
+        algorithms = [settings.ALGORITHM],
+        options = {"verify_aud": False}
     )
 
-
-# Funções auxiliares para validação
-
-def validar_tipo_token(payload: dict, tipo_esperado: str) -> bool:
+def validar_tipo_token(payload: Dict, tipo_esperado: str) -> bool:
     """
     Valida se o token é do tipo esperado.
     
@@ -163,7 +145,7 @@ def validar_tipo_token(payload: dict, tipo_esperado: str) -> bool:
     return payload.get("type") == tipo_esperado
 
 
-def extrair_user_id(payload: dict) -> Optional[str]:
+def extrair_user_id(payload: Dict) -> Optional[str]:
     """
     Extrai o ID do usuário do payload do token.
     
@@ -176,7 +158,7 @@ def extrair_user_id(payload: dict) -> Optional[str]:
     return payload.get("sub")
 
 
-def token_expirado(payload: dict) -> bool:
+def token_expirado(payload: Dict) -> bool:
     """
     Verifica se o token está expirado.
     
@@ -191,5 +173,5 @@ def token_expirado(payload: dict) -> bool:
         return True
     
     fortaleza = timezone("America/Fortaleza")
-    exp_datetime = datetime.fromtimestamp(exp, tz=fortaleza)
-    return datetime.now(tz=fortaleza) > exp_datetime
+    exp_datetime = datetime.fromtimestamp(exp, tz = fortaleza)
+    return datetime.now(tz = fortaleza) > exp_datetime
