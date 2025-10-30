@@ -25,11 +25,16 @@ pytest-mock~=3.12.0
 httpx~=0.27.0
 
 python-jose[cryptography]
-passlib[bcrypt]
+passlib[bcrypt]==1.7.4
+bcrypt==3.2.2
 python-multipart
+cryptography>=42.0.5
+rsa==4.9.1
 
-pydantic==2.5.0
-pydantic-settings==2.1.0
+pydantic==2.9.2
+pydantic-settings==2.6.0
+email_validator==2.2.0
+
 
 tqdm>=4.65.0
 
