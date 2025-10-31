@@ -95,3 +95,25 @@ class TotalGastoResponse(BaseModel):
     total: float | None 
 
     model_config = ConfigDict(from_attributes = True)
+
+class BeneficiarioComValorResponse(BaseModel):
+    """Schema para beneficiários com valor específico de auxílio"""
+    nome: str
+    cpf: str
+    municipio: str
+    estado: str
+    valor: float
+
+
+class BeneficiarioResponsavelResponse(BaseModel):
+    """Schema para beneficiários que são também responsáveis"""
+    nome_beneficiario: str
+    cpf_beneficiario: str
+    municipio: str
+    uf: str
+    nis_responsavel: str
+
+
+class ContagemResponse(BaseModel):
+    """Schema para retornar contagem de registros"""
+    quantidade: int
