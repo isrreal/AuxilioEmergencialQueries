@@ -4,9 +4,10 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.endpoints import (
-    auxilio_emergencial_routes,
+    auxilio_routes,
     beneficiario_routes,
-    responsavel_routes
+    responsavel_routes,
+    consultas_routes
 )
 from app.core.deps import get_session
 from app.core.auth import criar_token_acesso, autenticar
@@ -14,14 +15,14 @@ from app.core.auth import criar_token_acesso, autenticar
 api_router: APIRouter = APIRouter()
 
 api_router.include_router(
-    auxilio_emergencial_routes.router,
+    auxilio_routes.router,
     prefix = "/auxilio",
-    tags = ["Auxílio"]
+    tags = ["Auxílios"]
 )
 
 api_router.include_router(
     responsavel_routes.router,
-    prefix = "/responsaveis",  # Corrigido: Removido o espaço antes da barra
+    prefix = "/responsaveis",
     tags = ["Responsáveis"]
 )
 
@@ -29,6 +30,12 @@ api_router.include_router(
     beneficiario_routes.router,
     prefix = "/beneficiarios",
     tags = ["Beneficiários"]
+)
+
+api_router.include_router(
+    consultas_routes.router,
+    prefix = "/consultas",
+    tags = ["Consultas"]
 )
 
 @api_router.post("/login", summary = "Autenticar usuário e gerar token JWT")
