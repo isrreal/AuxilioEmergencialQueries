@@ -34,5 +34,8 @@ async def buscar_responsavel(nis: str, db: AsyncSession = Depends(get_session)):
         result = await session.execute(query)
         responsavel = result.scalar_one_or_none()
         if not responsavel:
-            raise HTTPException(status_code = 404, detail = f"Responsável {nis} não encontrado")
+            raise HTTPException(
+                status_code = status.HTTP_404_NOT_FOUND, 
+                detail = f"Responsável {nis} não encontrado"
+            )
         return responsavel
