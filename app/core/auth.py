@@ -13,9 +13,7 @@ from app.core.security import verificar_senha
 from app.models.models import Usuario
 
 
-oauth2_schema = OAuth2PasswordBearer(
-    tokenUrl = f"{settings.API_V1_STR}/auth/login"
-)
+oauth2_schema = OAuth2PasswordBearer(tokenUrl = f"{settings.API_V1_STR}/login")
 
 async def autenticar(email: EmailStr, senha: str, db: AsyncSession) -> Optional[Usuario]:
     """
@@ -30,7 +28,7 @@ async def autenticar(email: EmailStr, senha: str, db: AsyncSession) -> Optional[
         db (AsyncSession): A sessão assíncrona do SQLAlchemy para consulta.
 
     Returns:
-        Optional[Usuario]: O objeto `Usuario` correspondente se
+        Optional[Usuario]: O objeto `UsuarioModel` correspondente se
             as credenciais estiverem corretas. Retorna `None` caso o email
             não seja encontrado ou a senha esteja incorreta.
     """
@@ -89,7 +87,7 @@ def criar_token_acesso(sub: str) -> str:
     """
     return _criar_token(
         tipo_token = "access_token",
-        tempo_vida = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+        tempo_vida = timedelta(minutes = settings.ACCESS_TOKEN_EXPIRE_MINUTES),
         sub = sub
     )
 
