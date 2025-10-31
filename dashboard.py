@@ -37,7 +37,8 @@ def show_api_error(e: requests.exceptions.RequestException):
     if isinstance(e, requests.exceptions.ConnectionError):
         st.error(f"Erro de Conexão: Não foi possível conectar à API em {API_BASE_URL}. O serviço 'api' está rodando?")
     elif e.response is not None:
-        st.error(f"Erro na API ({e.response.status_code}): {e.response.json().get('detail', 'Erro desconhecido')}")
+        detail = e.response.json().get('detail', 'Erro desconhecido')
+        st.error(f"Erro na API ({e.response.status_code}): {detail}")
     else:
         st.error(f"Erro de request: {e}")
 
@@ -70,7 +71,7 @@ def get_total_gasto_por_mes(ano_mes: str) -> Optional[Dict[str, float]]:
 def search_beneficiarios(nome: Optional[str], uf: Optional[str], municipio: Optional[str]) -> List[Dict[str, Any]]:
     """Chama a API para buscar beneficiários por nome, UF e/ou município."""
     endpoint = f"{API_BASE_URL}/beneficiarios"
-    params = {"skip": 0, "limit": 100}
+    params = {"skip": 0, "limit": 100} 
     if nome:
         params["nome"] = nome
     if uf:
@@ -175,7 +176,7 @@ if page == "Estatísticas":
         st.subheader("Total Gasto por Mês")
         mes_selecionado = st.selectbox(
             "Selecione o Mês:",
-            options = MES_MAP.keys()
+            options = list(MES_MAP.keys()) 
         )
         
         if st.button("Consultar Gasto por Mês"):
@@ -209,7 +210,7 @@ elif page == "Busca de Beneficiários":
                 resultados = search_beneficiarios(nome_b, uf_b, municipio_b)
                 if resultados:
                     df = pd.DataFrame(resultados)
-                    st.dataframe(df)
+                    st.dataframe(df, use_container_width=True)
                 else:
                     st.info("Nenhum beneficiário encontrado com esses filtros.")
 
@@ -225,18 +226,9 @@ elif page == "Busca de Beneficiários":
                     resultado = get_beneficiario_by_nis(nis_b)
                     
                     if resultado:
-                        if isinstance(resultado, dict):
-                            df = pd.DataFrame([resultado])
-                        elif isinstance(resultado, list):
-                            df = pd.DataFrame(resultado)
-                        else:
-                            st.error("Formato de dados inesperado.")
-                            st.json(resultado)
-                            st.stop()
-                        
+                        df = pd.DataFrame([resultado])
                         st.dataframe(df, use_container_width = True)
-                    else:
-                        st.info("Nenhum beneficiário encontrado para o NIS informado.")
+                  
 
 
     with tab3:
@@ -244,8 +236,8 @@ elif page == "Busca de Beneficiários":
         uf_p = st.text_input("UF (ex: CE):", max_chars = 2, key = "p_uf").upper()
         parcela_p = st.selectbox(
             "Número de parcelas recebidas MAIOR que:",
-            options = [0, 1, 2, 3, 4],
-            index = 1,
+            options = [0, 1, 2, 3, 4], 
+            index = 1, 
             key = "p_parcela"
         )
         
@@ -257,7 +249,7 @@ elif page == "Busca de Beneficiários":
                     resultados = get_beneficiarios_por_parcela(uf_p, int(parcela_p))
                     if resultados:
                         df = pd.DataFrame(resultados)
-                        st.dataframe(df)
+                        st.dataframe(df, use_container_width = True)
 
 elif page == "Busca de Responsáveis":
     st.header("Consulta de Responsáveis")
@@ -276,7 +268,7 @@ elif page == "Busca de Responsáveis":
                     resultados = search_responsaveis(nome_r)
                     if resultados:
                         df = pd.DataFrame(resultados)
-                        st.dataframe(df)
+                        st.dataframe(df, use_container_width=True)
                     else:
                         st.info("Nenhum responsável encontrado.")
     
@@ -292,15 +284,5 @@ elif page == "Busca de Responsáveis":
                     resultado = get_responsavel_by_nis(nis_r)
                     
                     if resultado:
-                        if isinstance(resultado, dict):
-                            df = pd.DataFrame([resultado])
-                        elif isinstance(resultado, list):
-                            df = pd.DataFrame(resultado)
-                        else:
-                            st.error("Formato de dados inesperado.")
-                            st.json(resultado)
-                            st.stop()
-                        
+                        df = pd.DataFrame([resultado])
                         st.dataframe(df, use_container_width = True)
-                    else:
-                        st.info("Nenhum responsável encontrado para o NIS informado.")
