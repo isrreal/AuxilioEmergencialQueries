@@ -9,27 +9,28 @@ from app.core.deps import get_session
 
 router: APIRouter = APIRouter()
 
-@router.get('/', response_model = List[BeneficiarioListResponse])
+@router.get("/")
 async def listar_beneficiarios(
-    uf: Optional[str] = Query(max_length = 2),
-    municipio: Optional[str] = Query(None),
-    nome: Optional[str] = Query(None),
+    nome: Optional[str] = None,
+    uf: Optional[str] = None,
+    municipio: Optional[str] = None,
+    limit: int = 1000,
     db: AsyncSession = Depends(get_session)
 ):
-    """Lista beneficiários com filtros opcionais."""
-    async with db as session:
-        query = select(Beneficiario)
-        
-        if uf:
-            query = query.filter(Beneficiario.uf == uf.upper())
-        if municipio:
-            query = query.filter(Beneficiario.municipio.ilike(f'%{municipio}%'))
-        if nome:
-            query = query.filter(Beneficiario.nome_beneficiario.ilike(f'%{nome}%'))
-                
-        result = await session.execute(query)
-        beneficiarios = result.scalars().all()
-        return beneficiarios
+    query = select(Beneficiario)
+
+    if nome:
+        query = query.filter(Beneficiario.nome_beneficiario.ilike(f"{nome}%"))
+    if uf:
+        query = query.filter(Beneficiario.uf == uf)
+    if municipio:
+        query = query.filter(Beneficiario.municipio.ilike(f"%{municipio}%"))
+
+    query = query.order_by(Beneficiario.nis_beneficiario).limit(limit)
+    result = await db.execute(query)
+    rows = result.scalars().all()
+    return rows
+
 
 @router.get('/{nis}', response_model = BeneficiarioListResponse)
 async def buscar_beneficiario(
