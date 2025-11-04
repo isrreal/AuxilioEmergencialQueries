@@ -38,7 +38,7 @@ class Beneficiario(settings.DBBaseModel):
 
 class Auxilio(settings.DBBaseModel):
     __tablename__ = "auxilio"
-
+    
     id = Column(Integer, primary_key = True, autoincrement = True)
     ano_mes = Column(String(6))
     enquadramento = Column(Text)
@@ -47,7 +47,7 @@ class Auxilio(settings.DBBaseModel):
     valor = Column(Float)
     nis_beneficiario = Column(String, ForeignKey("beneficiario.nis_beneficiario"))
 
-    beneficiario = relationship("Beneficiario", back_populates = "auxilios")
+    beneficiario = relationship("Beneficiario", back_populates="auxilios")
 
 class Usuario(settings.DBBaseModel):
     __tablename__ = "usuarios"
