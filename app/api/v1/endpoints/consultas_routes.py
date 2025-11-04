@@ -198,7 +198,7 @@ async def executar_quantidade_beneficiarios_municipio(
             select(func.count(distinct(Beneficiario.nis_beneficiario)).label("quantidade"))
             .join(Auxilio, Beneficiario.nis_beneficiario == Auxilio.nis_beneficiario)
             .filter(Beneficiario.uf == uf.upper())
-            .filter(Beneficiario.municipio.ilike(f"%{municipio.upper()}%"))
+            .filter(Beneficiario.municipio.ilike(f"{municipio.upper()}%"))
         )
         result = await session.execute(query)
         quantidade = result.scalar_one_or_none()
