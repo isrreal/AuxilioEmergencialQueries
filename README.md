@@ -1,157 +1,440 @@
-# Descrição do Funcionamento do Código
+# Auxílio Emergencial - Sistema de Benchmark de Consultas
 
-Este projeto tem como foco demonstrar a eficiência do uso de índices em um banco de dados grande, utilizando o conjunto de dados do auxílio emergencial, disponível no [Brasil.io](https://brasil.io/dataset/govbr/auxilio_emergencial/), que possui aproximadamente 30GB.
+Sistema completo para análise de desempenho de consultas em banco de dados PostgreSQL utilizando índices otimizados. O projeto demonstra o impacto de diferentes estratégias de indexação em consultas reais de um dataset de Auxílio Emergencial com **257 milhões de registros**.
 
+## 🎯 Objetivo
 
+Demonstrar na prática como índices de banco de dados (B-Tree, GIN, TRGM) podem melhorar significativamente - ou não - o desempenho de consultas SQL complexas, através de benchmarks comparativos entre cenários com e sem indexação em um dataset real de grande volume.
 
+## 🏗️ Arquitetura
 
-## Inicialização do Banco de Dados e Normalização da Tabela Auxílio Emergencial
+O projeto é composto por três serviços containerizados:
 
-O código SQL fornecido tem o objetivo de criar e normalizar a estrutura de um banco de dados baseado nos dados do auxílio emergencial. A normalização segue os princípios de divisão da tabela original `auxilio_emergencial` em várias tabelas menores para evitar redundâncias e facilitar consultas mais eficientes. 
+- **PostgreSQL 15**: Banco de dados com extensão `pg_trgm` para buscas textuais
+- **FastAPI**: API REST para gerenciar índices e executar consultas
+- **Streamlit**: Dashboard interativo para visualização dos benchmarks
 
-### Criação de Índices
-
-Para otimizar as consultas no banco de dados, são criados índices baseados em árvores B nas colunas mais frequentemente consultadas, como:
-
-- **CPF e NIS** dos beneficiários e responsáveis, otimizando buscas por CPF/NIS e junções entre tabelas.
-- **Localização (código IBGE e UF)**, para consultas relacionadas à região geográfica.
-- **Ano e mês** dos auxílios, facilitando a consulta por períodos de tempo específicos.
-
-```sql
--- Índice para a tabela de beneficiários, com base em CPF (consultas por CPF são comuns)
-CREATE INDEX idx_beneficiario_cpf ON beneficiario USING BTREE (cpf_beneficiario);
-
--- Índice para a tabela de beneficiários, com base no município e UF (para consultas por localização)
-CREATE INDEX idx_beneficiario_localizacao ON beneficiario USING BTREE (codigo_ibge_municipio, uf);
-
--- Índice para a tabela de auxílios, com base no NIS do beneficiário (para junções frequentes entre auxilio e beneficiário)
-CREATE INDEX idx_auxilio_nis_beneficiario ON auxilio USING BTREE (nis_beneficiario);
-
--- Índice para a tabela de auxílios, com base no enquadramento e parcela (consultas específicas de auxílio)
-CREATE INDEX idx_auxilio_enquadramento_parcela ON auxilio USING BTREE (enquadramento, parcela);
-
--- Índice para a tabela de responsáveis, com base no CPF do responsável
-CREATE INDEX idx_responsavel_cpf ON responsavel USING BTREE (cpf_responsavel);
-
--- Índice para a tabela de responsáveis, com base no nome do responsável
-CREATE INDEX idx_responsavel_nome ON responsavel USING BTREE (nome_responsavel);
-
--- Índice para a tabela de auxílios, com base no ano e mês (para consultas por período)
-CREATE INDEX idx_auxilio_ano_mes ON auxilio USING BTREE (ano_mes);
 ```
-### Normalização das Tabelas
+┌─────────────────┐
+│   Streamlit     │
+│   Dashboard     │
+│   (Port 8501)   │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│    FastAPI      │
+│      API        │
+│   (Port 8000)   │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   PostgreSQL    │
+│   Database      │
+│   (Port 5430)   │
+└─────────────────┘
+```
 
-Para garantir que os dados sejam armazenados de forma eficiente e para facilitar consultas específicas, a tabela `auxilio_emergencial` foi dividida em três tabelas normalizadas: `responsavel`, `beneficiario` e `auxilio`.
+## 🚀 Tecnologias Utilizadas
 
-#### Tabela `auxilio_emergencial`
+- **Backend**: FastAPI, SQLAlchemy (async), Pydantic
+- **Frontend**: Streamlit, Pandas, Requests
+- **Banco de Dados**: PostgreSQL 15 Alpine
+- **Containerização**: Docker, Docker Compose
+- **Autenticação**: JWT (OAuth2)
+- **Processamento**: Asyncio, AsyncPG (bulk insert)
 
-Armazena os dados brutos sobre os benefícios concedidos, contendo informações como o mês e ano de concessão, o município, os detalhes do beneficiário e do responsável, a parcela e o valor do auxílio.
+## 📊 Cenários de Benchmark
+
+### 1. 💰 Gasto Total por UF
+- **Índices**: B-Tree em `beneficiario(uf, nis)` e `auxilio(nis, valor)`
+- **Operação**: `JOIN` + `SUM` com filtro por estado
+- **Caso de Uso**: Calcular investimento total por região
+
+### 2. 🏙️ Contagem por Município
+- **Índices**: GIN com `pg_trgm` em `municipio`
+- **Operação**: `COUNT DISTINCT` com `ILIKE '%termo%'`
+- **Caso de Uso**: Busca textual aproximada em nomes de cidades
+
+### 3. 🔠 Busca por Nome
+- **Índices**: B-Tree com `text_pattern_ops`
+- **Operação**: `SELECT` com `ILIKE 'termo%'`
+- **Caso de Uso**: Autocomplete e buscas por prefixo
+
+### 4. 🎁 Múltiplas Parcelas
+- **Índices**: Compostos em `auxilio(nis, parcela)` e `beneficiario(uf, nis)`
+- **Operação**: `JOIN` com filtro numérico
+- **Caso de Uso**: Identificar beneficiários com critérios específicos
+
+### 5. 👥 Beneficiários-Responsáveis
+- **Índices**: Múltiplos B-Tree para JOIN triplo
+- **Operação**: `JOIN` entre 3 tabelas com `DISTINCT`
+- **Caso de Uso**: Análise de relações familiares no programa
+
+## 📁 Estrutura do Projeto
+
+```
+.
+├── docker-compose.yml          # Orquestração dos serviços
+├── Dockerfile                  # Imagem Python para API e Dashboard
+├── .env                        # Variáveis de ambiente (não versionado)
+├── dashboard.py                # Interface Streamlit
+├── insert.py                   # Script de importação do CSV (257M linhas)
+├── dataset/                    # Dados CSV (não versionado)
+│   └── auxilio_emergencial.csv
+├── app/
+│   ├── main.py                # Inicialização FastAPI
+│   ├── api/
+│   │   └── v1/
+│   │       ├── api.py         # Router principal
+│   │       └── endpoints/
+│   │           └── consultas_routes.py  # Rotas de benchmark
+│   ├── core/
+│   │   ├── auth.py            # Autenticação JWT
+│   │   ├── deps.py            # Dependências (DB session)
+│   │   ├── config.py          # Configurações
+│   │   ├── database.py        # Engine e Session AsyncPG
+│   │   └── security.py        # Hashing de senhas
+│   ├── models/
+│   │   ├── models.py          # Modelos SQLAlchemy
+│   │   └── __all_models.py    # Import de todos os models
+│   └── schemas/
+│       └── schemas.py         # Schemas Pydantic
+└── README.md
+```
+
+## ⚙️ Configuração e Execução
+
+### Pré-requisitos
+
+- Docker e Docker Compose instalados
+- Dataset CSV (`auxilio_emergencial.csv`) na pasta `./dataset/`
+- Arquivo `.env` configurado
+- **Mínimo 8GB RAM** e **50GB de espaço em disco** para o dataset completo
+
+### Arquivo `.env`
+
+```env
+# PostgreSQL
+POSTGRES_USER=seu_usuario
+POSTGRES_PASSWORD=sua_senha
+DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/emergencial_aid_db
+
+# Segurança
+JWT_SECRET=sua_chave_secreta_jwt_muito_segura
+
+# Admin
+ADMIN_USER=admin@example.com
+ADMIN_PASSWORD=senha_admin_segura
+```
+
+### Iniciar o Projeto
+
+```bash
+# Clone o repositório
+git clone https://github.com/seu-usuario/AuxilioEmergencialQueries.git
+cd AuxilioEmergencialQueries
+
+# Configure o .env
+cp .env.example .env
+# Edite o .env com suas credenciais
+
+# Inicie apenas o banco de dados primeiro
+docker-compose up -d db
+
+# Aguarde o banco estar pronto
+docker-compose logs -f db
+# Aguarde até ver "database system is ready to accept connections"
+```
+
+### Importar os Dados
+
+**⚠️ IMPORTANTE**: A importação do dataset completo pode levar **várias horas** (estimativa: 2-26h dependendo do hardware).
+
+```bash
+# Execute o script de importação dentro do container
+docker-compose run --rm api python insert.py
+
+# Ou execute localmente se preferir
+python insert.py
+```
+
+**Detalhes da Importação:**
+- **257.170.290 registros** processados em chunks de 100.000
+- Utiliza **asyncpg COPY** para inserção em massa (bulk insert)
+- Remove duplicatas automaticamente
+- Cria usuário admin automaticamente
+- Progress bar com `tqdm` para acompanhamento
+
+**Estrutura dos dados importados:**
+- **Responsável**: ~66 milhões de registros únicos
+- **Beneficiário**: ~67 milhões de registros únicos
+- **Auxílio**: ~257 milhões de registros (histórico de parcelas)
+
+### Iniciar os Serviços
+
+```bash
+# Após a importação, inicie todos os serviços
+docker-compose up -d
+
+# Acompanhe os logs
+docker-compose logs -f api app_runner
+```
+
+### Acessar as Interfaces
+
+- **Dashboard Streamlit**: http://localhost:8501
+- **API FastAPI**: http://localhost:8000
+- **Documentação API**: http://localhost:8000/docs
+- **PostgreSQL**: localhost:5430
+
+## 🔍 Como Usar
+
+### Dashboard Streamlit
+
+1. Acesse http://localhost:8501
+2. Escolha uma aba de benchmark
+3. Configure os parâmetros da consulta (UF, município, nome, etc.)
+4. Clique em "Comparar"
+5. Aguarde o processo completo (4 etapas):
+   - Apagar índices
+   - Medir consulta SEM índice
+   - Criar índices (pode demorar)
+   - Medir consulta COM índice
+6. Visualize os resultados: tempo, ganho percentual, gráfico e amostra de dados
+
+### API Endpoints
+
+**Autenticação:**
+```http
+POST /api/v1/login
+Content-Type: application/x-www-form-urlencoded
+
+username=admin@example.com&password=senha_admin_segura
+```
+
+**Gerenciamento de Índices:**
+```http
+POST /api/v1/consultas/setup/gasto-uf/criar-indices
+POST /api/v1/consultas/setup/gasto-uf/apagar-indices
+POST /api/v1/consultas/setup/contagem-municipio/criar-indices
+POST /api/v1/consultas/setup/contagem-municipio/apagar-indices
+POST /api/v1/consultas/setup/por-nome/criar-indices
+POST /api/v1/consultas/setup/por-nome/apagar-indices
+POST /api/v1/consultas/setup/multiplas-parcelas/criar-indices
+POST /api/v1/consultas/setup/multiplas-parcelas/apagar-indices
+POST /api/v1/consultas/setup/beneficiarios-responsaveis/criar-indices
+POST /api/v1/consultas/setup/beneficiarios-responsaveis/apagar-indices
+```
+
+**Execução de Consultas:**
+```http
+GET /api/v1/consultas/executar/total-gasto-por-uf?uf=CE
+GET /api/v1/consultas/executar/quantidade-beneficiarios-municipio?uf=CE&municipio=FORTALEZA
+GET /api/v1/consultas/executar/beneficiarios-por-nome?nome=MARIA&limit=50
+GET /api/v1/consultas/executar/beneficiarios-multiplas-parcelas?uf=SP&min_parcela=1&limit=100
+GET /api/v1/consultas/executar/beneficiarios-responsaveis?uf=RJ&limit=50
+GET /api/v1/consultas/executar/buscar-beneficiario/{nis}
+GET /api/v1/consultas/executar/listar-beneficiarios?uf=CE&limit=1000
+```
+
+## 📈 Resultados Esperados
+
+Os benchmarks em um dataset com **257 milhões de registros** demonstram:
+
+### Sem Dataset Completo (Testes)
+- **Buscas por PK**: ~0.001s (instantâneo)
+- **Buscas textuais sem índice**: 5-30s
+- **Buscas textuais com GIN/TRGM**: 0.2-1s
+- **Agregações sem índice**: 10-60s
+- **Agregações com índice**: 1-5s
+
+### Com Dataset Completo (257M registros)
+- **Buscas por PK**: ~0.001-0.005s (instantâneo)
+- **Buscas textuais sem índice**: 60-600s (1-10 minutos) ou **TIMEOUT**
+- **Buscas textuais com GIN/TRGM**: 2-15s
+- **Agregações sem índice**: 120-900s (2-15 minutos) ou **TIMEOUT**
+- **Agregações com índice**: 5-30s
+- **JOINs complexos sem índice**: **TIMEOUT** (>10 minutos)
+- **JOINs complexos com índice**: 10-60s
+
+**Ganhos típicos**: **90-99% de redução** no tempo de resposta com índices otimizados.
+
+### Tempo de Criação de Índices
+
+Em um dataset com 257M de registros:
+- **B-Tree simples**: 2-5 minutos
+- **B-Tree composto**: 5-10 minutos
+- **GIN com TRGM**: 15-30 minutos
+- **Múltiplos índices**: 30-60 minutos
+
+## 🗄️ Modelo de Dados
+
 ```sql
-CREATE TABLE auxilio_emergencial(
-  ano_mes VARCHAR(6),
-  uf VARCHAR(2),
-  codigo_ibge_municipio integer,
-  municipio text,
-  nis_beneficiario text,
-  cpf_beneficiario text,
-  beneficiario text,
-  nis_responsavel text, 
-  cpf_responsavel text,
-  responsavel text,
-  enquadramento text,
-  parcela integer,
-  observacao text,
-  valor FLOAT
+-- Tabela: responsavel
+CREATE TABLE responsavel (
+    nis_responsavel VARCHAR PRIMARY KEY,
+    cpf_responsavel VARCHAR,
+    nome_responsavel VARCHAR
+);
+
+-- Tabela: beneficiario
+CREATE TABLE beneficiario (
+    nis_beneficiario VARCHAR PRIMARY KEY,
+    cpf_beneficiario VARCHAR,
+    nome_beneficiario VARCHAR,
+    uf VARCHAR(2),
+    codigo_ibge_municipio INTEGER,
+    municipio VARCHAR,
+    nis_responsavel VARCHAR REFERENCES responsavel(nis_responsavel)
+);
+
+-- Tabela: auxilio
+CREATE TABLE auxilio (
+    id SERIAL PRIMARY KEY,
+    ano_mes VARCHAR,
+    enquadramento VARCHAR,
+    parcela INTEGER,
+    observacao TEXT,
+    valor NUMERIC(10,2),
+    nis_beneficiario VARCHAR REFERENCES beneficiario(nis_beneficiario)
 );
 ```
 
-#### Tabela `responsavel`
-Armazena os dados dos responsáveis pelo auxílio, garantindo que cada responsável seja inserido uma única vez com base no seu **NIS**.
+## 🛡️ Segurança
 
-```sql
-CREATE TABLE IF NOT EXISTS responsavel (
-  nis_responsavel text PRIMARY KEY,
-  cpf_responsavel text,
-  nome_responsavel text
-);
+- Autenticação JWT para rotas protegidas
+- Variáveis sensíveis em `.env` (não versionado)
+- Hashing de senhas com bcrypt
+- Rate limiting configurável (600s timeout padrão)
+- Validação de inputs com Pydantic
+- Usuário admin criado automaticamente no `insert.py`
 
-INSERT INTO responsavel(nis_responsavel, cpf_responsavel, nome_responsavel)
-SELECT
-  DISTINCT ON (nis_responsavel) nis_responsavel,
-  cpf_responsavel,
-  responsavel
-FROM auxilio_emergencial
-WHERE nis_responsavel != '-2';
+## 🐛 Troubleshooting
 
-INSERT INTO responsavel VALUES ('-2',' ','responsavel indefinido');
-
+### Container do PostgreSQL não inicia
+```bash
+docker-compose down -v
+docker-compose up -d db
+docker-compose logs -f db
 ```
 
-#### Tabela `beneficiario`
-Contém os dados dos beneficiários, associando-os aos seus respectivos responsáveis. Essa tabela usa o **NIS** como chave primária e mantém a integridade referencial com a tabela `responsavel`.
+### Erro durante a importação (insert.py)
+```bash
+# Verifique se o CSV está no local correto
+ls -lh dataset/auxilio_emergencial.csv
 
-```sql
-CREATE TABLE IF NOT EXISTS beneficiario (
-  nis_beneficiario text PRIMARY KEY,
-  cpf_beneficiario text, 
-  nome_beneficiario text,
-  uf VARCHAR(2),
-  codigo_ibge_municipio integer,
-  municipio text,
-  nis_responsavel text,
-  FOREIGN KEY (nis_responsavel) REFERENCES responsavel(nis_responsavel)
-);
+# Verifique os logs do container
+docker-compose logs db
 
-INSERT INTO beneficiario(nis_beneficiario, cpf_beneficiario, nome_beneficiario, uf, codigo_ibge_municipio, municipio, nis_responsavel)
-SELECT
-  DISTINCT ON (nis_beneficiario) nis_beneficiario,
-  cpf_beneficiario,
-  beneficiario,
-  uf,
-  codigo_ibge_municipio,
-  municipio,
-  nis_responsavel
-FROM auxilio_emergencial
-WHERE nis_beneficiario IS NOT NULL;
-
+# Limpe o banco e reimporte
+docker-compose down -v
+docker-compose up -d db
+docker-compose run --rm api python insert.py
 ```
 
-#### Tabela `auxilio`
-Essa tabela armazena as informações detalhadas sobre os auxílios recebidos pelos beneficiários, como o valor do auxílio, o enquadramento, a parcela, e a observação. Cada auxílio está relacionado a um beneficiário por meio do campo `nis_beneficiario`, que é uma chave estrangeira referenciando a tabela `beneficiario`.
+### Timeout nas consultas
+- Aumente o `timeout` em `dashboard.py` (linha com `requests.get(..., timeout=600)`)
+- Verifique se os índices foram criados: acesse http://localhost:8000/docs
+- Monitore recursos do container: `docker stats`
+- Para o dataset completo, consultas sem índice podem **nunca terminar**
 
-```sql
-CREATE TABLE IF NOT EXISTS auxilio (
-  ano_mes VARCHAR(6),
-  enquadramento text,
-  parcela integer,
-  observacao text,
-  valor FLOAT,
-  nis_beneficiario text,
-  FOREIGN KEY (nis_beneficiario) REFERENCES beneficiario(nis_beneficiario)
-);
+### Erro de conexão com API
+```bash
+# Verifique se os containers estão rodando
+docker-compose ps
 
-INSERT INTO auxilio (ano_mes, enquadramento, parcela, observacao, valor, nis_beneficiario)
-SELECT ano_mes, enquadramento, parcela, observacao, valor, nis_beneficiario
-FROM auxilio_emergencial
-WHERE nis_beneficiario IS NOT NULL;
+# Reinicie o serviço
+docker-compose restart api
 
+# Verifique logs
+docker-compose logs api
 ```
-## Estrutura do Código
 
-1. **Banco de Dados e Estruturação:**
-   - O banco de dados contendo o auxílio emergencial é carregado, estruturado e armazenado utilizando PostgreSQL.
-   - São aplicadas operações de criação de índices em colunas estratégicas, permitindo que as consultas sejam otimizadas.
-   - O objetivo principal é comparar o tempo de execução de consultas com e sem o uso de índices.
+### Banco de dados lento após importação
+```bash
+# Execute VACUUM e ANALYZE
+docker-compose exec db psql -U seu_usuario -d emergencial_aid_db -c "VACUUM ANALYZE;"
+```
 
-2. **Interface Gráfica em Python (GUI):**
-   - A aplicação possui uma interface gráfica construída em Python, utilizando bibliotecas como `IPywidgets, que permite ao usuário executar e comparar as consultas de forma interativa.
-   - O usuário pode selecionar diferentes tipos de consultas (com ou sem índices) e visualizar o tempo de resposta de cada uma diretamente na interface.
-   - Gráficos ou indicadores de desempenho são exibidos para ilustrar a diferença de tempo entre as abordagens.
+### Erro de memória durante importação
+- Reduza o `chunk_size` em `insert.py` (de 100000 para 50000)
+- Aumente a memória disponível para o Docker
+- Considere importar parcialmente modificando `total_rows_to_process`
 
-3. **Consultas**
-   - As consultas selecionadas envolvem diferentes critérios de busca, como busca por CPF, município ou estado.
-   - A consulta é executada com índices aplicados e o tempo de execução é registrado
-   - A aplicação exibe os resultados, evidenciando o tempo de execução de índices.
+## 🔧 Configurações Avançadas
 
-4. **Conclusão:**
-   - A partir dos dados e do tempo de execução exibidos, o usuário pode concluir a importância de criar índices para consultas eficientes em grandes bases de dados, como o auxílio emergencial, onde a diferença no tempo de resposta pode ser significativa, especialmente em operações frequentes ou em sistemas críticos.
+### Otimizar PostgreSQL para Grandes Volumes
+
+Edite o `docker-compose.yml` e adicione:
+
+```yaml
+services:
+  db:
+    environment:
+      # ... outras configs
+    command: >
+      postgres
+      -c shared_buffers=2GB
+      -c effective_cache_size=6GB
+      -c maintenance_work_mem=512MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=10MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+```
+
+### Importação Parcial (Teste)
+
+Para testar com menos dados, edite `insert.py`:
+
+```python
+# Linha ~48
+total_rows_to_process = 1_000_000  # Ao invés de 257_170_290
+```
+
+## 📝 Licença
+
+Este projeto é disponibilizado para fins educacionais e de demonstração.
+
+## 👥 Contribuindo
+
+Contribuições são bem-vindas! Por favor:
+
+1. Fork o projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/NovaFeature`)
+3. Commit suas mudanças (`git commit -m 'Adiciona NovaFeature'`)
+4. Push para a branch (`git push origin feature/NovaFeature`)
+5. Abra um Pull Request
+
+### Ideias para Contribuição
+
+- Adicionar novos cenários de benchmark
+- Implementar cache de resultados
+- Criar visualizações mais avançadas
+- Adicionar testes automatizados
+- Otimizar queries existentes
+- Documentar mais patterns de indexação
+
+## 📚 Recursos Úteis
+
+- [Documentação PostgreSQL - Índices](https://www.postgresql.org/docs/current/indexes.html)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [Streamlit Documentation](https://docs.streamlit.io/)
+- [SQLAlchemy Async](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html)
+- [pg_trgm Extension](https://www.postgresql.org/docs/current/pgtrgm.html)
+
+## 📞 Contato
+
+Para dúvidas ou sugestões, abra uma issue no repositório.
+
+---
+
+**Desenvolvido com ⚙️ para demonstrar o poder da indexação em bancos de dados com grandes volumes**
+
+*Dataset: 257.170.290 registros | 3 tabelas | 5 cenários de benchmark*
