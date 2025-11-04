@@ -1,523 +1,346 @@
 import streamlit as st
 import requests
+import time
 import pandas as pd
-import locale
-from typing import Optional, List, Dict, Any
+from typing import Dict, Any, List, Tuple
 
-st.set_page_config(
-    page_title="Dashboard Auxílio Emergencial",
-    page_icon="🇧🇷",
-    layout="wide"
-)
+# ==============================
+# ⚙️ Configuração
+# ==============================
+API_BASE_URL: str = "http://api:8000/api/v1/consultas"
+st.set_page_config(page_title="Benchmark Índices - Auxílio Emergencial", layout="wide")
 
-API_BASE_URL = "http://api:8000/api/v1"
+st.title("📊 Benchmark de Consultas — Auxílio Emergencial")
+st.markdown("""
+Use as abas abaixo para executar comparativos de desempenho (queries com vs. sem índices)
+em diferentes cenários de consulta no banco de dados do Auxílio Emergencial.
 
-MES_MAP = {
-    'Abril/2020': '202004',
-    'Maio/2020': '202005',
-    'Junho/2020': '202006',
-    'Julho/2020': '202007',
-    'Agosto/2020': '202008',
-}
+**Processo de Benchmark em cada aba:**
+1.  **Apaga** o índice específico (via API).
+2.  **Mede** o tempo do `SELECT` (Sem Índice).
+3.  **Cria** o índice específico (via API).
+4.  **Mede** o tempo do `SELECT` (Com Índice).
+""")
 
-def format_currency(value: float) -> str:
-    """
-    Formata um valor float como moeda (BRL).
-    Inclui um fallback para o caso do locale 'pt_BR' não estar
-    instalado no contêiner Docker.
-    """
+
+# ==============================
+# ⚙️ Funções utilitárias (Sem alterações)
+# ==============================
+
+def medir_tempo_get(endpoint: str, params: dict) -> Tuple[float | None, int, Any]:
+    """Executa uma requisição GET e mede o tempo de resposta."""
+    inicio = time.time()
     try:
-        locale.setlocale(locale.LC_ALL, 'pt_BR.UTF-8')
-        return locale.currency(value, grouping=True)
-    except locale.Error:
-        return f"R$ {value:,.2f}"
-
-def show_api_error(e: requests.exceptions.RequestException):
-    """Exibe uma mensagem de erro padronizada da API."""
-    if isinstance(e, requests.exceptions.ConnectionError):
-        st.error(f"Erro de Conexão: Não foi possível conectar à API em {API_BASE_URL}. O serviço 'api' está rodando?")
-    elif e.response is not None:
-        detail = e.response.json().get('detail', 'Erro desconhecido')
-        st.error(f"Erro na API ({e.response.status_code}): {detail}")
-    else:
-        st.error(f"Erro de request: {e}")
-
-
-# ========== FUNÇÕES DA API - ROTAS BÁSICAS ==========
-
-@st.cache_data
-def get_total_gasto_por_uf(uf: str) -> Optional[Dict[str, float]]:
-    """Chama a API FastAPI para buscar o total gasto por UF."""
-    endpoint = f"{API_BASE_URL}/consultas/total-gasto-por-uf"
-    try:
-        response = requests.get(endpoint, params={"uf": uf})
-        response.raise_for_status() 
-        return response.json()  
-    except requests.exceptions.RequestException as e:
-        show_api_error(e)
-        return None
-
-@st.cache_data
-def get_total_gasto_por_mes(ano_mes: str) -> Optional[Dict[str, float]]:
-    """Chama a API para buscar o total gasto por mês."""
-    endpoint = f"{API_BASE_URL}/consultas/total-gasto-por-mes"
-    try:
-        response = requests.get(endpoint, params={"ano_mes": ano_mes})
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        show_api_error(e)
-        return None
-
-@st.cache_data
-def search_beneficiarios(nome: Optional[str], uf: Optional[str], municipio: Optional[str]) -> List[Dict[str, Any]]:
-    """Chama a API para buscar beneficiários por nome, UF e/ou município."""
-    endpoint = f"{API_BASE_URL}/beneficiarios/"
-    params = {} 
-    if nome:
-        params["nome"] = nome
-    if uf:
-        params["uf"] = uf
-    if municipio:
-        params["municipio"] = municipio
+        resp = requests.get(f"{API_BASE_URL}/{endpoint}", params=params, timeout=600)
+        duracao = time.time() - inicio
         
-    try:
-        response = requests.get(endpoint, params=params)
-        response.raise_for_status()
-        return response.json() 
+        if resp.status_code == 200:
+            return duracao, resp.status_code, resp.json()
+        else:
+            detail = f"Erro {resp.status_code}: {resp.json().get('detail', 'Erro desconhecido')}"
+            return None, resp.status_code, detail
+            
+    except requests.exceptions.Timeout:
+        return None, 504, "Timeout (600s). A consulta sem índice é provavelmente muito lenta."
     except requests.exceptions.RequestException as e:
-        show_api_error(e)
-        return []
+        return None, 500, f"Erro de conexão: {str(e)}"
+    except Exception as e:
+        return None, 500, str(e)
 
-@st.cache_data
-def get_beneficiario_by_nis(nis: str) -> Optional[Dict[str, Any]]:
-    """Chama a API para buscar um beneficiário por NIS."""
-    endpoint = f"{API_BASE_URL}/beneficiarios/{nis}"
+def chamar_setup_post(endpoint: str) -> Tuple[float | None, Any]:
+    """Chama uma rota POST de setup e mede o tempo."""
+    inicio = time.time()
     try:
-        response = requests.get(endpoint)
-        response.raise_for_status()
-        return response.json()  
+        resp = requests.post(f"{API_BASE_URL}/{endpoint}", timeout=900)
+        duracao = time.time() - inicio
+        
+        if resp.status_code == 200:
+            return duracao, resp.json()
+        else:
+            return None, resp.json()
+            
+    except requests.exceptions.Timeout:
+        return None, {"detail": "Timeout (900s) ao criar/apagar índice."}
     except requests.exceptions.RequestException as e:
-        show_api_error(e)
-        return None
+        return None, {"detail": f"Erro de conexão: {str(e)}"}
+    except Exception as e:
+        return None, {"detail": str(e)}
 
-@st.cache_data
-def search_responsaveis(nome: str) -> List[Dict[str, Any]]:
-    """Chama a API para buscar responsáveis por nome."""
-    endpoint = f"{API_BASE_URL}/responsaveis"
-    params = {"nome": nome}
-    try:
-        response = requests.get(endpoint, params=params)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        show_api_error(e)
-        return []
-
-@st.cache_data
-def get_responsavel_by_nis(nis: str) -> Optional[Dict[str, Any]]:
-    """Chama a API para buscar um responsável por NIS."""
-    endpoint = f"{API_BASE_URL}/responsaveis/{nis}"
-    try:
-        response = requests.get(endpoint)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        show_api_error(e)
-        return None
-
-@st.cache_data
-def get_beneficiarios_por_valor(valor: float) -> List[Dict[str, Any]]:
-    """Chama a API para buscar beneficiários que receberam um valor específico."""
-    endpoint = f"{API_BASE_URL}/consultas/beneficiarios-por-valor"
-    params = {"valor": valor}
-    try:
-        response = requests.get(endpoint, params=params)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        show_api_error(e)
-        return []
-
-@st.cache_data
-def get_quantidade_beneficiarios_municipio(uf: str, municipio: str) -> Optional[Dict[str, int]]:
-    """Chama a API para buscar quantidade de beneficiários em um município."""
-    endpoint = f"{API_BASE_URL}/consultas/quantidade-beneficiarios-municipio"
-    params = {"uf": uf, "municipio": municipio}
-    try:
-        response = requests.get(endpoint, params=params)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        show_api_error(e)
-        return None
-
-@st.cache_data
-def get_beneficiarios_responsaveis(uf: str) -> List[Dict[str, Any]]:
-    """Chama a API para buscar beneficiários que são também responsáveis."""
-    endpoint = f"{API_BASE_URL}/consultas/beneficiarios-responsaveis"
-    params = {"uf": uf}
-    try:
-        response = requests.get(endpoint, params=params)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        show_api_error(e)
-        return []
-
-@st.cache_data
-def get_beneficiarios_multiplas_parcelas(uf: str, min_parcela: int) -> List[Dict[str, Any]]:
-    """Chama a API para buscar beneficiários com múltiplas parcelas."""
-    endpoint = f"{API_BASE_URL}/consultas/beneficiarios-multiplas-parcelas"
-    params = {"uf": uf, "min_parcela": min_parcela}
-    try:
-        response = requests.get(endpoint, params=params)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        show_api_error(e)
-        return []
-
-@st.cache_data
-def get_beneficiarios_por_nome(nome: str) -> List[Dict[str, Any]]:
-    """Chama a API para buscar beneficiários por nome específico."""
-    endpoint = f"{API_BASE_URL}/consultas/beneficiarios-por-nome"
-    params = {"nome": nome}
-    try:
-        response = requests.get(endpoint, params=params)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        show_api_error(e)
-        return []
-
-st.sidebar.title("Navegação")
-page = st.sidebar.radio(
-    "Selecione uma página:",
-    (
-        "Estatísticas", 
-        "Busca de Beneficiários", 
-        "Busca de Responsáveis",
-        "Consultas Avançadas"
-    )
-)
-
-st.title("🇧🇷 Dashboard de Análise do Auxílio Emergencial")
-st.markdown("Consumindo dados em tempo real da API FastAPI do projeto.")
-
-if page == "Estatísticas":
-    st.header("📊 Estatísticas de Pagamento")
+def exibir_resultados(df: pd.DataFrame, tempo_create: float, label_tempo="Tempo (s)"):
+    """Exibe resultados em tabela, gráfico e cálculo de ganho."""
+    st.subheader("⏱️ Resultados de desempenho")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("💰 Total Gasto por UF")
-        uf_input = st.text_input(
-            label="Digite a UF (ex: CE, SP, BA):",
-            max_chars=2,
-            key="uf_total_input"
-        ).upper()
-        
-        if st.button("Consultar Gasto por UF"):
-            if not uf_input:
-                st.warning("Por favor, digite uma UF.")
+        st.metric(label="Tempo de Criação do Índice", value=f"{tempo_create:.3f} s")
+        if label_tempo in df.columns and len(df[label_tempo]) == 2:
+            tempo_sem = df[label_tempo].iloc[0]
+            tempo_com = df[label_tempo].iloc[1]
+            
+            if tempo_sem is not None and tempo_com is not None and tempo_sem > 0:
+                ganho = (tempo_sem - tempo_com) / tempo_sem * 100
+                if ganho > 0:
+                    st.success(f"🏆 **Ganho de desempenho:** {ganho:.2f}% mais rápido.")
+                elif ganho < 0:
+                    st.warning(f"🚨 **Perda de desempenho:** {abs(ganho):.2f}% mais lento com índice.")
+                else:
+                    st.info("ℹ️ **Sem diferença de desempenho.**")
+            elif tempo_sem is None:
+                st.error("Falha na medição 'Sem Índice' (provavelmente Timeout). Ganho não calculado.")
+            elif tempo_com is None:
+                 st.error("Falha na medição 'Com Índice'. Ganho não calculado.")
             else:
-                with st.spinner(f"Buscando dados para {uf_input}..."):
-                    data = get_total_gasto_por_uf(uf_input)
-                    if data:
-                        total = data.get("total", 0)
-                        st.metric(
-                            label=f"Total Gasto em {uf_input}",
-                            value=format_currency(total)
-                        )
+                st.info("Não foi possível calcular o ganho (Tempo 'Sem Índice' foi 0).")
     
     with col2:
-        st.subheader("📅 Total Gasto por Mês")
-        mes_selecionado = st.selectbox(
-            "Selecione o Mês:",
-            options=list(MES_MAP.keys()) 
-        )
-        
-        if st.button("Consultar Gasto por Mês"):
-            ano_mes_val = MES_MAP[mes_selecionado]
-            with st.spinner(f"Buscando dados para {mes_selecionado}..."):
-                data = get_total_gasto_por_mes(ano_mes_val)
-                if data:
-                    total = data.get("total", 0)
-                    st.metric(
-                        label=f"Total Gasto em {mes_selecionado}",
-                        value=format_currency(total)
-                    )
-    
-    st.divider()
-    
-    st.subheader("🏘️ Quantidade de Beneficiários por Município")
-    col3, col4 = st.columns(2)
-    
-    with col3:
-        uf_mun = st.text_input("UF:", max_chars=2, key="uf_municipio").upper()
-    with col4:
-        municipio_input = st.text_input("Município:", key="municipio_input")
-    
-    if st.button("Consultar Quantidade"):
-        if not uf_mun or not municipio_input:
-            st.warning("Por favor, preencha UF e Município.")
-        else:
-            with st.spinner(f"Buscando dados para {municipio_input}/{uf_mun}..."):
-                data = get_quantidade_beneficiarios_municipio(uf_mun, municipio_input)
-                if data:
-                    quantidade = data.get("quantidade", 0)
-                    st.metric(
-                        label=f"Beneficiários em {municipio_input}/{uf_mun}",
-                        value=f"{quantidade:,}".replace(",", ".")
-                    )
+        st.dataframe(df, use_container_width=True)
 
-elif page == "Busca de Beneficiários":
-    st.header("🔍 Consulta de Beneficiários")
-    
-    tab1, tab2, tab3 = st.tabs([
-        "Buscar por Nome/Local", 
-        "Buscar por NIS", 
-        "Buscar por Nome Específico"
-    ])
-    
-    with tab1:
-        st.subheader("Buscar por Nome, UF e/ou Município")
-        st.info("💡 Deixe os campos vazios para listar todos os beneficiários")
-        nome_b = st.text_input("Nome (parcial):", key="b_nome")
-        uf_b = st.text_input("UF (ex: CE):", max_chars=2, key="b_uf").upper()
-        municipio_b = st.text_input("Município (parcial):", key="b_mun")
-        
-        if st.button("Buscar Beneficiários", key="b_btn_nome"):
-            with st.spinner("Buscando..."):
-                resultados = search_beneficiarios(nome_b or None, uf_b or None, municipio_b or None)
-                if resultados:
-                    df = pd.DataFrame(resultados)
-                    st.success(f"✅ {len(resultados)} beneficiário(s) encontrado(s)")
-                    st.dataframe(df, use_container_width=True)
-                    
-                    csv = df.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        label="📥 Download CSV",
-                        data=csv,
-                        file_name="beneficiarios.csv",
-                        mime="text/csv"
-                    )
-                else:
-                    st.info("Nenhum beneficiário encontrado com esses filtros.")
+    if label_tempo in df.columns:
+        df_plot = df.copy()
+        df_plot[label_tempo] = pd.to_numeric(df_plot[label_tempo], errors='coerce')
+        st.bar_chart(df_plot.set_index("Cenário")[label_tempo])
 
-    with tab2:
-        st.subheader("Buscar por NIS")
-        nis_b = st.text_input("Digite o NIS do Beneficiário:", key="b_nis")
-        
-        if st.button("Buscar por NIS", key="b_btn_nis"):
-            if not nis_b:
-                st.warning("Por favor, digite um NIS.")
+
+# ==============================
+# 🚀 FUNÇÃO DE BENCHMARK (COM A CORREÇÃO)
+# ==============================
+def run_benchmark(
+    api_setup_key: str,
+    api_exec_endpoint: str,
+    exec_params: Dict[str, Any],
+    session_state_key: str,
+    result_columns: List[str],
+    data_extractor_fn: callable
+):
+    """Função genérica para executar o fluxo de benchmark de 4 etapas."""
+    
+    with st.spinner("Executando benchmark... (Isso pode levar vários minutos)"):
+        try:
+            st.write(f"1/4: Apagando índices ({api_setup_key})...")
+            _, data_drop = chamar_setup_post(f"setup/{api_setup_key}/apagar-indices")
+            if _ is None:
+                raise Exception(f"Falha ao APAGAR índices: {data_drop}")
+
+            st.write("2/4: Executando consulta SEM índice...")
+            tempo_sem, status_sem, data_sem = medir_tempo_get(api_exec_endpoint, exec_params)
+            
+            # ================== A CORREÇÃO ESTÁ AQUI ==================
+            if tempo_sem is None:
+                # Lança uma exceção para parar o benchmark e ser pego pelo 'except' abaixo
+                # Isso impede que ele continue para o passo 3/4
+                raise Exception(f"Falha na consulta SEM índice (Status {status_sem}): {data_sem}")
+            # ================== FIM DA CORREÇÃO ==================
+            
+            st.write(f"3/4: Criando índices ({api_setup_key})... (Pode demorar)")
+            tempo_create, data_create = chamar_setup_post(f"setup/{api_setup_key}/criar-indices")
+            if tempo_create is None:
+                raise Exception(f"Falha ao CRIAR índices: {data_create}")
+
+            st.write("4/4: Executando consulta COM índice...")
+            tempo_com, status_com, data_com = medir_tempo_get(api_exec_endpoint, exec_params)
+            if tempo_com is None:
+                st.warning(f"Falha na consulta COM índice (Status {status_com}): {data_com}")
+
+            df_data = {
+                "Cenário": ["Sem Índice", "Com Índice"],
+                "Tempo (s)": [tempo_sem, tempo_com],
+                "Status": [status_sem, status_com],
+            }
+            
+            dados_sem_idx = data_extractor_fn(data_sem)
+            dados_com_idx = data_extractor_fn(data_com)
+            
+            if isinstance(result_columns, list) and isinstance(dados_sem_idx, (list, tuple)):
+                 for i, col_name in enumerate(result_columns):
+                     df_data[col_name] = [dados_sem_idx[i], dados_com_idx[i]]
             else:
-                with st.spinner("Buscando..."):
-                    resultado = get_beneficiario_by_nis(nis_b)
-                    
-                    if resultado:
-                        st.success("✅ Beneficiário encontrado!")
-                        df = pd.DataFrame([resultado])
-                        st.dataframe(df, use_container_width=True)
+                col_name = result_columns[0] if isinstance(result_columns, list) else result_columns
+                df_data[col_name] = [dados_sem_idx, dados_com_idx]
 
-    with tab3:
-        st.subheader("Buscar por Nome Específico")
-        st.info("💡 Busca beneficiários cujo nome começa com o texto informado")
-        nome_especifico = st.text_input(
-            "Digite o nome (ex: ISRAEL):",
-            key="b_nome_esp"
-        ).upper()
-        
-        if st.button("Buscar", key="b_btn_nome_esp"):
-            if not nome_especifico:
-                st.warning("Por favor, digite um nome.")
-            else:
-                with st.spinner("Buscando..."):
-                    resultados = get_beneficiarios_por_nome(nome_especifico)
-                    if resultados:
-                        df = pd.DataFrame(resultados)
-                        st.success(f"✅ {len(resultados)} beneficiário(s) encontrado(s)")
-                        st.dataframe(df, use_container_width=True)
-                        
-                        csv = df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="📥 Download CSV",
-                            data=csv,
-                            file_name=f"beneficiarios_{nome_especifico}.csv",
-                            mime="text/csv",
-                            key="download_nome_esp"
-                        )
-                    else:
-                        st.info(f"Nenhum beneficiário encontrado com o nome '{nome_especifico}'.")
+            df = pd.DataFrame(df_data)
+            
+            st.session_state[session_state_key] = (df, tempo_create, data_com if tempo_com is not None else None)
+            st.success("Benchmark concluído!")
 
-elif page == "Busca de Responsáveis":
-    st.header("👥 Consulta de Responsáveis")
-    
-    tab1, tab2 = st.tabs(["Buscar por Nome", "Buscar por NIS"])
-    
-    with tab1:
-        st.subheader("Buscar por Nome")
-        st.info("💡 Digite parte do nome para buscar")
-        nome_r = st.text_input("Nome (parcial):", key="r_nome")
-        
-        if st.button("Buscar Responsáveis", key="r_btn_nome"):
-            if not nome_r:
-                st.warning("Por favor, digite parte do nome.")
-            else:
-                with st.spinner("Buscando..."):
-                    resultados = search_responsaveis(nome_r)
-                    if resultados:
-                        df = pd.DataFrame(resultados)
-                        st.success(f"✅ {len(resultados)} responsável(is) encontrado(s)")
-                        st.dataframe(df, use_container_width=True)
-                        
-                        csv = df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="📥 Download CSV",
-                            data=csv,
-                            file_name="responsaveis.csv",
-                            mime="text/csv"
-                        )
-                    else:
-                        st.info("Nenhum responsável encontrado.")
-    
-    with tab2:
-        st.subheader("Buscar por NIS")
-        nis_r = st.text_input("Digite o NIS do Responsável:", key="r_nis")
-        
-        if st.button("Buscar por NIS", key="r_btn_nis"):
-            if not nis_r:
-                st.warning("Por favor, digite um NIS.")
-            else:
-                with st.spinner("Buscando..."):
-                    resultado = get_responsavel_by_nis(nis_r)
-                    
-                    if resultado:
-                        st.success("✅ Responsável encontrado!")
-                        df = pd.DataFrame([resultado])
-                        st.dataframe(df, use_container_width=True)
+        except Exception as e:
+            st.error(f"Erro fatal no benchmark: {e}")
+            st.session_state[session_state_key] = None
 
-elif page == "Consultas Avançadas":
-    st.header("🔬 Consultas Avançadas")
-    
-    tab1, tab2, tab3 = st.tabs([
-        "Beneficiários por Valor",
-        "Beneficiários com Múltiplas Parcelas",
-        "Beneficiários-Responsáveis"
-    ])
-    
-    with tab1:
-        st.subheader("💵 Beneficiários que Receberam Valor Específico")
-        st.info("📋 Consulta baseada em: Beneficiários que receberam 600 reais")
+# ==============================
+# 🚀 FUNÇÃO CRIADORA DE ABAS (NOVO)
+# ==============================
+
+def criar_aba_benchmark(tab: st.tabs, config: Dict[str, Any]):
+    """Cria uma aba de benchmark inteira a partir de um dicionário de configuração."""
+    with tab:
+        st.header(config["header"])
+        st.markdown(config["markdown"])
         
-        valor_input = st.number_input(
-            "Digite o valor do auxílio:",
-            min_value=0.0,
-            value=600.0,
-            step=100.0,
-            key="valor_input"
-        )
+        # Chama a função que renderiza os inputs específicos desta aba
+        exec_params = config["input_fn"]()
         
-        if st.button("Buscar por Valor", key="btn_valor"):
-            with st.spinner(f"Buscando beneficiários que receberam R$ {valor_input:.2f}..."):
-                resultados = get_beneficiarios_por_valor(valor_input)
-                if resultados:
-                    df = pd.DataFrame(resultados)
-                    st.success(f"✅ {len(resultados)} beneficiário(s) encontrado(s)")
-                    st.dataframe(df, use_container_width=True)
-                    
-                    total_gasto = len(resultados) * valor_input
-                    st.metric(
-                        label="Total Gasto Estimado",
-                        value=format_currency(total_gasto)
-                    )
-                    
-                    csv = df.to_csv(index=False).encode('utf-8')
-                    st.download_button(
-                        label="📥 Download CSV",
-                        data=csv,
-                        file_name=f"beneficiarios_valor_{valor_input}.csv",
-                        mime="text/csv",
-                        key="download_valor"
-                    )
-                else:
-                    st.info(f"Nenhum beneficiário encontrado com valor R$ {valor_input:.2f}")
-    
-    with tab2:
-        st.subheader("📦 Beneficiários com Múltiplas Parcelas")
-        st.info("📋 Consulta baseada em: Beneficiários que receberam mais de uma parcela")
+        session_key = config["session_state_key"]
         
-        col1, col2 = st.columns(2)
-        with col1:
-            uf_parcelas = st.text_input("UF (ex: CE):", max_chars=2, key="uf_parcelas").upper()
-        with col2:
-            min_parcela = st.selectbox(
-                "Parcelas maiores que:",
-                options=[0, 1, 2, 3, 4],
-                index=1,
-                key="min_parcela"
+        if st.button(f"Comparar {config['header']}", key=config["button_key"]):
+            run_benchmark(
+                api_setup_key=config["api_setup_key"],
+                api_exec_endpoint=config["api_exec_endpoint"],
+                exec_params=exec_params,
+                session_state_key=session_key,
+                result_columns=config["result_columns"],
+                data_extractor_fn=config["data_extractor_fn"]
             )
         
-        if st.button("Buscar", key="btn_parcelas"):
-            if not uf_parcelas:
-                st.warning("Por favor, digite uma UF.")
-            else:
-                with st.spinner("Buscando..."):
-                    resultados = get_beneficiarios_multiplas_parcelas(uf_parcelas, min_parcela)
-                    if resultados:
-                        df = pd.DataFrame(resultados)
-                        st.success(f"✅ {len(resultados)} beneficiário(s) encontrado(s)")
-                        st.dataframe(df, use_container_width=True)
-                        
-                        csv = df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="📥 Download CSV",
-                            data=csv,
-                            file_name=f"beneficiarios_{uf_parcelas}_parcelas.csv",
-                            mime="text/csv",
-                            key="download_parcelas"
-                        )
-                    else:
-                        st.info(f"Nenhum beneficiário encontrado em {uf_parcelas} com mais de {min_parcela} parcela(s).")
-    
-    with tab3:
-        st.subheader("👤👥 Beneficiários que São Responsáveis Concomitantes")
-        st.info("📋 Consulta: Pessoas que aparecem tanto como beneficiários quanto como responsáveis")
-        
-        uf_resp = st.text_input("UF (ex: CE):", max_chars=2, key="uf_resp").upper()
-        
-        if st.button("Buscar", key="btn_resp"):
-            if not uf_resp:
-                st.warning("Por favor, digite uma UF.")
-            else:
-                with st.spinner("Buscando..."):
-                    resultados = get_beneficiarios_responsaveis(uf_resp)
-                    if resultados:
-                        df = pd.DataFrame(resultados)
-                        st.success(f"✅ {len(resultados)} registro(s) encontrado(s)")
-                        st.dataframe(df, use_container_width=True)
-                        
-                        csv = df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="📥 Download CSV",
-                            data=csv,
-                            file_name=f"beneficiarios_responsaveis_{uf_resp}.csv",
-                            mime="text/csv",
-                            key="download_resp"
-                        )
-                    else:
-                        st.info(f"Nenhum beneficiário-responsável encontrado em {uf_resp}.")
+        # Lógica de exibição de resultados
+        if session_key in st.session_state and st.session_state[session_key]:
+            df, tempo_create, data_com = st.session_state[session_key]
+            exibir_resultados(df, tempo_create)
+            
+            if config.get("show_data_sample", False) and isinstance(data_com, list) and len(data_com) > 0:
+                st.subheader("Amostra dos dados (Com Índice)")
+                st.dataframe(pd.DataFrame(data_com[:20]), use_container_width=True)
 
-# ========== FOOTER ==========
-st.divider()
-st.markdown(
-    """
-    <div style='text-align: center; color: gray; font-size: 12px;'>
-        Dashboard desenvolvido com Streamlit | Dados via API FastAPI<br>
-        💡 <strong>Dica:</strong> Use os botões de download para exportar os dados em CSV
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+
+# ==============================
+# 📊 CONFIGURAÇÃO DAS ABAS (NOVO)
+# ==============================
+
+# Funções que renderizam os inputs e retornam os parâmetros da API
+def inputs_gasto_uf() -> Dict[str, Any]:
+    uf = st.text_input("Digite a UF (ex: CE)", "CE", key="uf_gasto").upper()
+    return {"uf": uf}
+
+def inputs_contagem_municipio() -> Dict[str, Any]:
+    col1, col2 = st.columns(2)
+    uf = col1.text_input("UF", "CE", key="uf_contagem").upper()
+    municipio = col2.text_input("Parte do Município (ex: Aquiraz)", "AQUIRAZ", key="municipio_contagem").upper()
+    return {"uf": uf, "municipio": municipio}
+
+def inputs_busca_nome() -> Dict[str, Any]:
+    col1, col2 = st.columns(2)
+    nome = col1.text_input("Nome ou parte do nome (ex: MARIA)", "MARIA", key="nome_busca").upper()
+    limit = col2.slider("Limite de registros", 10, 500, 50, key="limit_nome")
+    return {"nome": nome, "limit": limit}
+
+def inputs_busca_parcela() -> Dict[str, Any]:
+    col1, col2, col3 = st.columns(3)
+    uf = col1.text_input("UF", "SP", key="uf_multi").upper()
+    min_parcela = col2.number_input("N° da Parcela Maior que", min_value=0, value=1, key="min_parcela")
+    limit = col3.slider("Limite de registros", 10, 500, 50, key="limit_multi_parcela")
+    return {"uf": uf, "min_parcela": min_parcela, "limit": limit}
+
+def inputs_beneficiarios_responsaveis() -> Dict[str, Any]:
+    col1, col2 = st.columns(2)
+    uf = col1.text_input("UF", "SP", key="uf_resp").upper()
+    limit = col2.slider("Limite de registros", 10, 500, 50, key="limit_resp")
+    return {"uf": uf, "limit": limit}
+
+# Lista de configuração principal
+BENCHMARK_CONFIG = [
+    {
+        "header": "💰 Gasto por UF",
+        "markdown": "Testa a performance de `JOIN` + `SUM` com filtro em `uf`.",
+        "api_setup_key": "gasto-uf",
+        "api_exec_endpoint": "executar/total-gasto-por-uf",
+        "session_state_key": "gasto_results",
+        "button_key": "btn_gasto",
+        "input_fn": inputs_gasto_uf,
+        "result_columns": ["Total (R$)"],
+        "data_extractor_fn": lambda data: data.get("total", 0) if isinstance(data, dict) else 0
+    },
+    {
+        "header": "🏙️ Contagem Município",
+        "markdown": "Testa a eficiência de buscas com `ILIKE '%termo%'` usando índices `GIN/TRGM`.",
+        "api_setup_key": "contagem-municipio",
+        "api_exec_endpoint": "executar/quantidade-beneficiarios-municipio",
+        "session_state_key": "contagem_results",
+        "button_key": "btn_contagem",
+        "input_fn": inputs_contagem_municipio,
+        "result_columns": ["Quantidade"],
+        "data_extractor_fn": lambda data: data.get("quantidade", 0) if isinstance(data, dict) else 0
+    },
+    {
+        "header": "🔠 Busca por Nome",
+        "markdown": "Testa a eficiência de buscas com `ILIKE 'termo%'` usando índices `B-Tree`.",
+        "api_setup_key": "por-nome",
+        "api_exec_endpoint": "executar/beneficiarios-por-nome",
+        "session_state_key": "nome_results",
+        "button_key": "btn_nome",
+        "input_fn": inputs_busca_nome,
+        "result_columns": ["Registros"],
+        "data_extractor_fn": lambda data: len(data) if isinstance(data, list) else 0,
+        "show_data_sample": True
+    },
+    {
+        "header": "🎁 Busca por N° Parcela",
+        "markdown": "Busca beneficiários com parcelas *maiores que* o valor informado. Testa `JOIN`s.",
+        "api_setup_key": "multiplas-parcelas",
+        "api_exec_endpoint": "executar/beneficiarios-multiplas-parcelas",
+        "session_state_key": "parcela_results",
+        "button_key": "btn_parcela",
+        "input_fn": inputs_busca_parcela,
+        "result_columns": ["Registros"],
+        "data_extractor_fn": lambda data: len(data) if isinstance(data, list) else 0,
+        "show_data_sample": True
+    },
+    {
+        "header": "👥 Beneficiários Responsáveis",
+        "markdown": "Encontra beneficiários que também são responsáveis. Testa `JOIN` triplo.",
+        "api_setup_key": "beneficiarios-responsaveis",
+        "api_exec_endpoint": "executar/beneficiarios-responsaveis",
+        "session_state_key": "resp_results",
+        "button_key": "btn_resp",
+        "input_fn": inputs_beneficiarios_responsaveis,
+        "result_columns": ["Registros"],
+        "data_extractor_fn": lambda data: len(data) if isinstance(data, list) else 0,
+        "show_data_sample": True
+    }
+]
+
+# ==============================
+# 📊 RENDERIZAÇÃO DAS ABAS (Corpo principal limpo)
+# ==============================
+
+# Cria os objetos das abas
+tab_titles = [config["header"] for config in BENCHMARK_CONFIG] + ["🆔 Utilitário: Busca por NIS"]
+tabs = st.tabs(tab_titles)
+
+# Itera sobre a configuração para criar as abas 1-5
+for i, config in enumerate(BENCHMARK_CONFIG):
+    criar_aba_benchmark(tabs[i], config)
+
+# ==============================
+# 🆔 Aba 6: Utilitário (Lógica separada)
+# ==============================
+with tabs[5]:
+    st.header("🆔 Utilitário: Busca por Chave Primária (NIS)")
+    st.markdown("""
+    Esta é uma busca simples por Chave Primária (PK). **Isso não é um benchmark.**
+    A API não expõe rotas para apagar o índice da PK (o que é correto).
+    Isto apenas demonstra a velocidade de uma busca `SELECT ... WHERE pk = ...`
+    """)
+    
+    nis_busca = st.text_input("NIS do Beneficiário (ex: 16110218880)", "16110218880", key="nis_busca")
+
+    if st.button("Buscar por NIS", key="btn_nis"):
+        endpoint_url = f"executar/buscar-beneficiario/{nis_busca}"
+        
+        with st.spinner(f"Buscando NIS {nis_busca}..."):
+            tempo, status_code, data = medir_tempo_get(endpoint_url, {})
+            
+            if tempo is not None and status_code == 200:
+                st.success(f"Beneficiário encontrado em {tempo:.6f} segundos.")
+                st.json(data)
+                st.session_state['nis_result'] = data
+            else:
+                st.error(f"Erro ao buscar (Status {status_code}): {data}")
+                st.session_state['nis_result'] = None
+
+    elif 'nis_result' in st.session_state and st.session_state['nis_result']:
+        st.subheader("Último resultado buscado:")
+        st.json(st.session_state['nis_result'])
+
+
+st.markdown("---")
+st.caption("Desenvolvido para o Projeto 2RDF ⚙️")
