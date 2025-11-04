@@ -223,7 +223,7 @@ async def executar_beneficiarios_que_sao_responsaveis(
                 Responsavel.nis_responsavel
             )
             .join(Auxilio, Beneficiario.nis_beneficiario == Auxilio.nis_beneficiario)
-            .join(Responsavel, Auxilio.nis_responsavel == Responsavel.nis_responsavel)
+            .join(Responsavel, Auxilio.nis_beneficiario == Responsavel.nis_responsavel)
             .filter(Beneficiario.uf == uf.upper())
             .filter(Beneficiario.nis_beneficiario == Responsavel.nis_responsavel)
             .distinct() 
