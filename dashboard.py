@@ -2,144 +2,250 @@ import streamlit as st
 import requests
 import time
 import pandas as pd
+import plotly.graph_objects as go
+import json
+from typing import Generator, Any, Dict, List, Literal, TypedDict, Callable
 
-API_BASE_URL = "http://api:8000/api/v1/consultas"
-SETUP_ROUTES_URL = "http://api:8000/api/v1/setup"
-
-LOGIN_URL = "http://api:8000/api/v1/login" 
-
+# Configuração
+API_BASE = "http://api:8000/api/v1"
 st.set_page_config(page_title="Benchmark Índices", layout="wide")
 
+# ===================================================================
+# AUTENTICAÇÃO
+# ===================================================================
 
-# ==============================
-# <--- Seção de Login
-# ==============================
-st.sidebar.title("Login")
-
-if "api_token" not in st.session_state:
-    st.session_state["api_token"] = None
-
-username = st.sidebar.text_input("Usuário")
-password = st.sidebar.text_input("Senha", type="password")
-
-if st.sidebar.button("Logar"):
-    login_data = {"username": username, "password": password}
+def login(username: str, password: str) -> str | None:
+    """Realiza login e retorna o token."""
     try:
-        resp = requests.post(LOGIN_URL, data=login_data)
-        
+        resp = requests.post(
+            f"{API_BASE}/login",
+            data={"username": username, "password": password},
+            timeout=10
+        )
         if resp.status_code == 200:
-            token = resp.json().get("access_token")
-            st.session_state["api_token"] = token 
-            st.sidebar.success("Login bem-sucedido!")
-            st.experimental_rerun() 
-            st.session_state["api_token"] = None
-            st.sidebar.error(f"Falha no login (Status {resp.status_code}): {resp.json().get('detail', 'Erro')}")
-            
-    except requests.exceptions.ConnectionError:
-        st.sidebar.error(f"Erro de conexão. A API está online em {LOGIN_URL}?")
+            return resp.json().get("access_token")
+    except requests.exceptions.RequestException as e:
+        st.sidebar.error(f"Erro de conexão: {e}")
     except Exception as e:
-        st.sidebar.error(f"Erro ao conectar: {e}")
+        st.sidebar.error(f"Erro inesperado: {e}")
+    return None
 
-if st.session_state["api_token"]:
-    st.sidebar.success("✅ Autenticado")
-    if st.sidebar.button("Logout"):
-        st.session_state["api_token"] = None
-        st.experimental_rerun()
-else:
-    st.sidebar.warning("⚠️ Não autenticado. Faça login para executar benchmarks de setup.")
+def get_headers() -> dict:
+    """Retorna headers com token de autenticação."""
+    token = st.session_state.get("token")
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
+# Sidebar de Login
+st.sidebar.title("🔐 Autenticação")
 
-# ==============================
-# Funções Utilitárias
-# ==============================
+if "token" not in st.session_state:
+    st.session_state.token = None
 
-def request_api(method, endpoint, params=None, timeout=600):
-    """
-    Faz requisição à API e retorna (tempo, status, dados).
-    Direciona a chamada para a URL base correta (setup ou consultas).
-    """
+if not st.session_state.token:
+    username = st.sidebar.text_input("Usuário")
+    password = st.sidebar.text_input("Senha", type="password")
     
-    if endpoint.startswith("executar/"):
-        url = f"{API_BASE_URL}/{endpoint}"
-    elif endpoint.startswith("setup/"):
-        clean_endpoint = endpoint.replace("setup/", "", 1)
-        url = f"{SETUP_ROUTES_URL}/{clean_endpoint}"
-    else:
-        url = f"{API_BASE_URL}/{endpoint}"
-        
-    headers = {}
-    if st.session_state.get("api_token"):
-        headers["Authorization"] = f"Bearer {st.session_state['api_token']}"
-
-    inicio = time.time()
-    
-    try:
-        if method == "GET":
-            resp = requests.get(url, params = params, timeout = timeout, headers = headers)
+    if st.sidebar.button("Entrar"):
+        token = login(username, password)
+        if token:
+            st.session_state.token = token
+            st.rerun()
         else:
-            resp = requests.post(url, timeout = timeout, headers = headers)
-        
-        duracao = time.time() - inicio
-        
-        if resp.status_code == 200:
-            return duracao, resp.status_code, resp.json()
-        
-        if resp.status_code == 401:
-             st.error("Erro 401: Não autorizado. Seu token pode ter expirado. Faça login novamente.")
-             st.session_state["api_token"] = None 
-             
-        detail = resp.json().get('detail', 'Erro desconhecido')
-        return None, resp.status_code, detail
-    
-    except requests.exceptions.Timeout:
-        return None, 504, "Timeout (a operação pode estar em andamento)"
-    except requests.exceptions.ConnectionError:
-        return None, 503, f"Erro de conexão. A API está online em {url}?"
+            st.sidebar.error("❌ Login falhou")
+else:
+    st.sidebar.success("✅ Autenticado")
+    if st.sidebar.button("Sair"):
+        st.session_state.token = None
+        st.rerun()
+
+# ===================================================================
+# FUNÇÕES DE API (COM PREFIXO /consultas/)
+# ===================================================================
+
+def api_post(endpoint: str) -> tuple[float | None, int, Any]:
+    """Faz requisição POST e retorna (tempo, status, dados)."""
+    try:
+        start = time.time()
+        resp = requests.post(
+            f"{API_BASE}/{endpoint}",
+            headers = get_headers(),
+            timeout = 900 
+        )
+        resp.raise_for_status() 
+        return time.time() - start, resp.status_code, resp.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erro na API (POST {endpoint}): {e}")
+        return None, e.response.status_code if hasattr(e, 'response') else 500, None
     except Exception as e:
-        return None, 500, str(e)
+        st.error(f"Erro inesperado: {e}")
+        return None, 500, None
+
+def api_get(endpoint: str, params: dict = None) -> tuple[float | None, int, Any]:
+    """Faz requisição GET e retorna (tempo, status, dados)."""
+    try:
+        start = time.time()
+        resp = requests.get(
+            f"{API_BASE}/consultas/{endpoint}",
+            params=params,
+            headers=get_headers(),
+            timeout=600
+        )
+        resp.raise_for_status() 
+        tempo = time.time() - start
+        return tempo, resp.status_code, resp.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erro na API (GET {endpoint}): {e}")
+        return None, e.response.status_code if hasattr(e, 'response') else 500, None
+    except json.JSONDecodeError as e:
+        st.error(f"Erro ao decodificar JSON: {e}")
+        return None, 500, None
+    except Exception as e:
+        st.error(f"Erro inesperado: {e}")
+        return None, 500, None
+
+def api_stream_gen(endpoint: str, params: dict = None) -> Generator[Dict[str, Any], None, None]:
+    """Faz requisição com streaming e "produz" (yield) cada item NDJSON."""
+    if params is None:
+        params = {}
+    params["formato"] = "ndjson" # NDJSON é mais robusto para streaming
+    
+    try:
+        with requests.get(
+            f"{API_BASE}/consultas/{endpoint}",
+            params=params,
+            headers=get_headers(),
+            timeout=600,
+            stream=True 
+        ) as resp:
+            resp.raise_for_status() 
+            
+            buffer = b""
+            for chunk in resp.iter_content(chunk_size = 8192):
+                if not chunk:
+                    continue
+                    
+                buffer += chunk
+                lines = buffer.split(b'\n')
+                buffer = lines[-1] 
+                
+                for line in lines[:-1]:
+                    line_stripped = line.strip()
+                    if line_stripped:
+                        try:
+                            yield json.loads(line_stripped.decode('utf-8'))
+                        except json.JSONDecodeError:
+                            st.warning(f"Ignorando linha mal formatada: {line_stripped[:50]}...")
+            
+            if buffer.strip():
+                try:
+                    yield json.loads(buffer.strip().decode('utf-8'))
+                except json.JSONDecodeError:
+                    st.warning(f"Ignorando linha final mal formatada: {buffer[:50]}...")
+                    
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erro na API (Stream {endpoint}): {e}")
+    except Exception as e:
+        st.error(f"Erro inesperado no stream: {e}")
+
+# ===================================================================
+# LÓGICA DE BENCHMARK 
+# ===================================================================
+
+def _run_query(endpoint: str, params: dict, usar_stream: bool) -> tuple[float | None, Any, List[Any]]:
+    """
+    Helper: Roda uma única consulta (stream ou get) e retorna 
+    (tempo_total, dados_completos, amostra_dados).
+    """
+    start_time = time.time()
+    
+    # Copia params para evitar mutação
+    query_params = params.copy() if params else {}
+
+    if usar_stream:
+        registros = []
+        amostra = []
+        try:
+            # Rota de streaming (ex: beneficiarios-responsaveis)
+            for item in api_stream_gen(endpoint, query_params):
+                if len(amostra) < 50:
+                    amostra.append(item)
+                registros.append(item) # Pode consumir muita memória se for grande
+            
+            tempo_total = time.time() - start_time
+            return tempo_total, registros, amostra
+        
+        except Exception as e:
+            st.error(f"Erro durante o streaming da query: {e}")
+            return None, [], []
+            
+    else:
+        # Rota de agregação ou lista (GET normal)
+        # Adiciona stream=False para rotas que precisam (ex: por-nome)
+        if "limit" in query_params:
+            query_params["stream"] = False 
+            
+        tempo_api, code, data = api_get(endpoint, query_params)
+        
+        if tempo_api is not None:
+            amostra = []
+            if isinstance(data, list):
+                amostra = data[:50]
+            elif isinstance(data, dict):
+                amostra = [data] # Agregação
+            
+            return tempo_api, data, amostra
+        else:
+            return None, data, []
 
 
-def executar_benchmark(setup_key, exec_endpoint, params, extractor_fn):
+def executar_benchmark(
+    setup_key: str, 
+    exec_endpoint: str, 
+    params: dict, 
+    extractor_fn: Callable, 
+    usar_stream: bool = False
+):
     """Executa o ciclo completo de benchmark"""
     
-    # <--- Checagem de login
-    if not st.session_state.get("api_token"):
-        st.error("Você precisa estar logado para executar um benchmark (criar/apagar índices).")
+    if not st.session_state.get("token"):
+        st.error("❌ Faça login primeiro")
         return None
-        
+
+    status = st.empty()
+    
     with st.spinner("Executando benchmark..."):
         # 1. Apagar índice
-        st.write(f"1/4: Apagando índices ('{setup_key}')...")
-        _, status, msg = request_api("POST", f"setup/{setup_key}/apagar-indices", timeout=900)
-        if status != 200:
-            st.error(f"Erro ao apagar índices: {status} - {msg}")
+        status.info("1/4: Apagando índices...")
+        _, code, msg = api_post(f"setup/{setup_key}/apagar-indices")
+        if code != 200:
+            st.error(f"Erro ao apagar índices: {msg}")
             return None
         
         # 2. Consulta SEM índice
-        st.write(f"2/4: Consultando SEM índice ('{exec_endpoint}')...")
-        tempo_sem, status_sem, data_sem = request_api("GET", exec_endpoint, params)
+        status.info("2/4: Consultando SEM índice...")
+        tempo_sem, data_sem, _ = _run_query(exec_endpoint, params, usar_stream)
         if tempo_sem is None:
-            st.error(f"Erro na consulta sem índice: {status_sem} - {data_sem}")
+            st.error(f"Erro na consulta sem índice: {data_sem}")
             return None
         
         # 3. Criar índice
-        st.write(f"3/4: Criando índices ('{setup_key}')...")
-        tempo_create, status_create, msg_create = request_api("POST", f"setup/{setup_key}/criar-indices", timeout=900)
+        status.info("3/4: Criando índices...")
+        tempo_create, code_create, msg_create = api_post(f"setup/{setup_key}/criar-indices")
         if tempo_create is None:
-            st.error(f"Erro ao criar índices: {status_create} - {msg_create}")
+            st.error(f"Erro ao criar índices: {msg_create}")
             return None
         
         # 4. Consulta COM índice
-        st.write(f"4/4: Consultando COM índice ('{exec_endpoint}')...")
-        tempo_com, status_com, data_com = request_api("GET", exec_endpoint, params)
+        status.info("4/4: Consultando COM índice...")
+        tempo_com, data_com, amostra_com = _run_query(exec_endpoint, params, usar_stream)
         if tempo_com is None:
-            st.warning(f"Erro na consulta com índice: {status_com} - {data_com}")
+            st.warning(f"Erro na consulta com índice: {data_com}")
         
         # Calcular resultados
         valor_sem = extractor_fn(data_sem)
         valor_com = extractor_fn(data_com) if tempo_com else None
         
-        ganho = ((tempo_sem - tempo_com) / tempo_sem * 100) if tempo_com and tempo_sem > 0 else None
+        ganho = ((tempo_sem - tempo_com) / tempo_sem * 100) if tempo_com else None
         
         st.success("✅ Benchmark concluído!")
         
@@ -150,12 +256,12 @@ def executar_benchmark(setup_key, exec_endpoint, params, extractor_fn):
             "valor_sem": valor_sem,
             "valor_com": valor_com,
             "ganho": ganho,
-            "data_com": data_com
+            "data_com": amostra_com # Apenas a amostra para exibir
         }
 
 
 def exibir_resultados(resultado, col_name="Resultado"):
-    """Exibe os resultados do benchmark"""
+    """Exibe os resultados do benchmark (versão do dashboard.py)"""
     
     col1, col2 = st.columns(2)
     
@@ -167,171 +273,230 @@ def exibir_resultados(resultado, col_name="Resultado"):
                 st.success(f"🏆 Ganho: {resultado['ganho']:.2f}% mais rápido")
             else:
                 st.warning(f"🚨 Perda: {abs(resultado['ganho']):.2f}% mais lento")
-        else:
-            st.info("Não foi possível calcular o ganho (um dos tempos é 0 ou nulo).")
-
     
     with col2:
-        df = pd.DataFrame({
+        df_data = {
             "Cenário": ["Sem Índice", "Com Índice"],
             "Tempo (s)": [resultado['tempo_sem'], resultado['tempo_com']],
             col_name: [resultado['valor_sem'], resultado['valor_com']]
-        })
+        }
+        df = pd.DataFrame(df_data)
         st.dataframe(df, use_container_width=True)
     
     # Gráfico
-    chart_data = df.melt(id_vars=["Cenário"], value_vars=["Tempo (s)"], var_name="Métrica", value_name="Tempo")
-    st.bar_chart(chart_data.set_index("Cenário"))
+    chart_df = df.set_index("Cenário")[["Tempo (s)"]]
+    st.bar_chart(chart_df)
+
+    # Amostra de dados (se houver)
+    amostra = resultado.get('data_com', [])
+    if isinstance(amostra, list) and len(amostra) > 0:
+        with st.expander(f"📄 Amostra dos Dados (primeiros {len(amostra)} registros)"):
+            st.dataframe(pd.DataFrame(amostra))
 
 
-# ==============================
-# Interface Principal e Abas
-# ==============================
+# ===================================================================
+# --- CONFIGURAÇÃO CENTRALIZADA DA INTERFACE (com 6 abas) ---
+# ===================================================================
+
+# Definindo tipos para melhor autocompletar e verificação
+InputType = Literal["text", "number", "slider"]
+
+class BenchmarkInput(TypedDict):
+    label: str
+    key: str
+    default: Any
+    type: InputType
+    kwargs: Dict[str, Any]
+
+class BenchmarkConfig(TypedDict):
+    id: str
+    title: str
+    header: str
+    markdown: str
+    setup_key: str
+    api_endpoint: str
+    usar_stream: bool
+    extractor_fn: Callable
+    layout_cols: int
+    inputs: List[BenchmarkInput]
+    col_name: str # Nome da coluna de resultados
+
+# Esta lista agora comanda toda a interface
+BENCHMARKS_CONFIG: List[BenchmarkConfig] = [
+    {
+        "id": "gasto_uf",
+        "title": "💰 Gasto por UF",
+        "header": "💰 Gasto por UF",
+        "markdown": "Testa `JOIN` + `SUM` com filtro em `uf`",
+        "setup_key": "gasto-uf",
+        "api_endpoint": "total-gasto-por-uf",
+        "usar_stream": False,
+        "extractor_fn": lambda d: d.get("total", 0) if isinstance(d, dict) else 0,
+        "layout_cols": 1,
+        "inputs": [
+            {"label": "UF (ex: CE)", "key": "uf", "default": "CE", "type": "text", "kwargs": {}},
+        ],
+        "col_name": "Total (R$)"
+    },
+    {
+        "id": "contagem_municipio",
+        "title": "🏙️ Contagem Município",
+        "header": "🏙️ Contagem Município",
+        "markdown": "Testa `ILIKE '%termo%'` com índices `GIN/TRGM`",
+        "setup_key": "contagem-municipio",
+        "api_endpoint": "beneficiarios-por-municipio",
+        "usar_stream": False,
+        "extractor_fn": lambda d: d.get("quantidade", 0) if isinstance(d, dict) else 0,
+        "layout_cols": 2,
+        "inputs": [
+            {"label": "UF", "key": "uf", "default": "CE", "type": "text", "kwargs": {}},
+            {"label": "Município", "key": "municipio", "default": "AQUIRAZ", "type": "text", "kwargs": {}},
+        ],
+        "col_name": "Quantidade"
+    },
+    {
+        "id": "busca_nome",
+        "title": "🔠 Busca por Nome",
+        "header": "🔠 Busca por Nome",
+        "markdown": "Testa `ILIKE 'termo%'` com índices `B-Tree`. (Força GET com `stream=False`)",
+        "setup_key": "por-nome",
+        "api_endpoint": "beneficiarios-por-nome",
+        "usar_stream": False, # Usar GET normal com stream=False
+        "extractor_fn": lambda d: len(d) if isinstance(d, list) else 0,
+        "layout_cols": 2,
+        "inputs": [
+            {"label": "Nome", "key": "nome", "default": "MARIA", "type": "text", "kwargs": {}},
+            {"label": "Limite", "key": "limit", "default": 50, "type": "slider", "kwargs": {"min_value": 10, "max_value": 500}},
+        ],
+        "col_name": "Registros"
+    },
+    {
+        "id": "busca_parcela",
+        "title": "🎁 Busca por Parcela",
+        "header": "🎁 Busca por N° Parcela",
+        "markdown": "Busca beneficiários com parcelas > valor. (Força GET com `stream=False`)",
+        "setup_key": "multiplas-parcelas", 
+        "api_endpoint": "beneficiarios-multiplas-parcelas",
+        "usar_stream": False, # Usar GET normal com stream=False
+        "extractor_fn": lambda d: len(d) if isinstance(d, list) else 0,
+        "layout_cols": 3,
+        "inputs": [
+            {"label": "UF", "key": "uf", "default": "SP", "type": "text", "kwargs": {}},
+            {"label": "Parcela >", "key": "min_parcela", "default": 1, "type": "number", "kwargs": {"min_value": 0}},
+            {"label": "Limite", "key": "limit", "default": 50, "type": "slider", "kwargs": {"min_value": 10, "max_value": 500}},
+        ],
+        "col_name": "Registros"
+    },
+    {
+        "id": "benef_responsaveis",
+        "title": "👥 Beneficiários Responsáveis",
+        "header": "👥 Beneficiários Responsáveis",
+        "markdown": "Encontra beneficiários que também são responsáveis (Usa **Streaming**)",
+        "setup_key": "beneficiarios-responsaveis",
+        "api_endpoint": "beneficiarios-responsaveis",
+        "usar_stream": True, 
+        "extractor_fn": lambda d: len(d) if isinstance(d, list) else 0,
+        "layout_cols": 2,
+        "inputs": [
+            {"label": "UF", "key": "uf", "default": "SP", "type": "text", "kwargs": {}},
+        ],
+        "col_name": "Registros"
+    },
+]
+
+
+# ===================================================================
+# INTERFACE (Agora gerada dinamicamente)
+# ===================================================================
 
 st.title("📊 Benchmark de Consultas — Auxílio Emergencial")
+st.markdown("Compare o desempenho de consultas com e sem índices")
 
-if not st.session_state.get("api_token"):
-    st.info("ℹ️ Faça login na barra lateral para habilitar os botões de Benchmark.")
+if not st.session_state.get("token"):
+    st.warning("⚠️ Faça login pela barra lateral para executar os benchmarks")
+    st.stop()
 
-tabs = st.tabs([
-    "💰 Gasto por UF",
-    "🏙️ Contagem Município", 
-    "🔠 Busca por Nome",
-    "🎁 Busca por Parcela",
-    "👥 Beneficiários Responsáveis",
-    "🆔 Busca por NIS"
-])
+# Cria as abas a partir da configuração
+tab_titles = [b['title'] for b in BENCHMARKS_CONFIG]
+tab_titles.append("🆔 Busca por NIS") # Adiciona a aba estática
+tabs = st.tabs(tab_titles)
 
-is_logged_in = st.session_state.get("api_token") is not None
+# Itera sobre a configuração e as abas criadas
+for tab, benchmark in zip(tabs[:-1], BENCHMARKS_CONFIG):
+    with tab:
+        st.header(benchmark['header'])
+        st.markdown(benchmark['markdown'])
+        
+        params = {}
+        input_key_prefix = f"{benchmark['id']}_"
+        
+        # Cria colunas de layout
+        cols = st.columns(benchmark['layout_cols'])
+        
+        # Itera e cria os widgets de input
+        for i, inp in enumerate(benchmark['inputs']):
+            col = cols[i % benchmark['layout_cols']]
+            input_key = f"{input_key_prefix}{inp['key']}"
+            input_widget = None
+            val = None
 
-# Aba 1: Gasto por UF
-with tabs[0]:
-    st.header("💰 Gasto por UF")
-    st.markdown("Testa `JOIN` + `SUM` com filtro em `uf` (índice B-Tree).")
-    
-    uf = st.text_input("UF (ex: CE)", "CE", key="uf1").upper()
-    
-    if st.button("Executar Benchmark", key="btn1", disabled=not is_logged_in):
-        resultado = executar_benchmark(
-            setup_key="gasto-uf",
-            exec_endpoint="executar/total-gasto-por-uf",
-            params={"uf": uf},
-            extractor_fn=lambda d: d.get("total", 0)
-        )
-        if resultado:
-            st.session_state['r1'] = resultado
-    
-    if 'r1' in st.session_state:
-        exibir_resultados(st.session_state['r1'], "Total (R$)")
+            if inp['type'] == 'text':
+                val = col.text_input(
+                    inp['label'], 
+                    inp['default'], 
+                    key=input_key, 
+                    **inp['kwargs']
+                )
+                params[inp['key']] = str(val).upper()
+                
+            elif inp['type'] == 'number':
+                val = col.number_input(
+                    inp['label'], 
+                    value=inp['default'], 
+                    key=input_key, 
+                    **inp['kwargs']
+                )
+                params[inp['key']] = int(val)
+            
+            elif inp['type'] == 'slider':
+                val = col.slider(
+                    inp['label'], 
+                    value=inp['default'], 
+                    key=input_key, 
+                    **inp['kwargs']
+                )
+                params[inp['key']] = int(val)
 
-# Aba 2: Contagem Município
-with tabs[1]:
-    st.header("🏙️ Contagem Município")
-    st.markdown("Testa `ILIKE 'termo%'` com índices `GIN/TRGM`.")
-    
-    col1, col2 = st.columns(2)
-    uf = col1.text_input("UF", "CE", key="uf2").upper()
-    municipio = col2.text_input("Município", "AQUIRAZ", key="mun2").upper()
-    
-    if st.button("Executar Benchmark", key="btn2", disabled=not is_logged_in):
-        resultado = executar_benchmark(
-            setup_key="contagem-municipio",
-            exec_endpoint="executar/quantidade-beneficiarios-municipio",
-            params={"uf": uf, "municipio": municipio},
-            extractor_fn=lambda d: d.get("quantidade", 0)
-        )
-        if resultado:
-            st.session_state['r2'] = resultado
-    
-    if 'r2' in st.session_state:
-        exibir_resultados(st.session_state['r2'], "Quantidade")
+        # Chave de botão e de sessão únicas
+        button_key = f"btn_{benchmark['id']}"
+        session_state_key = f"r_{benchmark['id']}"
 
-# Aba 3: Busca por Nome
-with tabs[2]:
-    st.header("🔠 Busca por Nome")
-    st.markdown("Testa `ILIKE 'termo%'` com índices `GIN/TRGM` em `nome_beneficiario`.")
-    
-    col1, col2 = st.columns(2)
-    nome = col1.text_input("Nome", "MARIA", key="nome3").upper()
-    limit = col2.slider("Limite", 10, 500, 50, key="lim3")
-    
-    if st.button("Executar Benchmark", key="btn3", disabled=not is_logged_in):
-        resultado = executar_benchmark(
-            setup_key="por-nome",
-            exec_endpoint="executar/beneficiarios-por-nome",
-            params={"nome": nome, "limit": limit},
-            extractor_fn=lambda d: len(d) if isinstance(d, list) else 0
-        )
-        if resultado:
-            st.session_state['r3'] = resultado
-    
-    if 'r3' in st.session_state:
-        exibir_resultados(st.session_state['r3'], "Registros")
-        if isinstance(st.session_state['r3']['data_com'], list):
-            st.subheader("Amostra dos dados")
-            st.dataframe(pd.DataFrame(st.session_state['r3']['data_com'][:20]))
+        if st.button("Executar Benchmark", key=button_key):
+            resultado = executar_benchmark(
+                setup_key=benchmark['setup_key'],
+                exec_endpoint=benchmark['api_endpoint'],
+                params=params,
+                extractor_fn=benchmark['extractor_fn'],
+                usar_stream=benchmark['usar_stream']
+            )
+            if resultado:
+                st.session_state[session_state_key] = resultado
+        
+        if session_state_key in st.session_state:
+            exibir_resultados(
+                st.session_state[session_state_key], 
+                col_name=benchmark['col_name']
+            )
 
-# Aba 4: Busca por Parcela
-with tabs[3]:
-    st.header("🎁 Busca por N° Parcela")
-    st.markdown("Busca beneficiários com `parcela > X`. Testa índice B-Tree em `(nis, parcela)`.")
-    
-    col1, col2, col3 = st.columns(3)
-    uf = col1.text_input("UF", "SP", key="uf4").upper()
-    min_parcela = col2.number_input("Parcela >", 0, value=1, key="par4")
-    limit = col3.slider("Limite", 10, 500, 50, key="lim4")
-    
-    if st.button("Executar Benchmark", key="btn4", disabled=not is_logged_in):
-        resultado = executar_benchmark(
-            setup_key="multiplas-parcelas",
-            exec_endpoint="executar/beneficiarios-multiplas-parcelas",
-            params={"uf": uf, "min_parcela": min_parcela, "limit": limit},
-            extractor_fn=lambda d: len(d) if isinstance(d, list) else 0
-        )
-        if resultado:
-            st.session_state['r4'] = resultado
-    
-    if 'r4' in st.session_state:
-        exibir_resultados(st.session_state['r4'], "Registros")
-        if isinstance(st.session_state['r4']['data_com'], list):
-            st.subheader("Amostra dos dados")
-            st.dataframe(pd.DataFrame(st.session_state['r4']['data_com'][:20]))
-
-# Aba 5: Beneficiários Responsáveis
-with tabs[4]:
-    st.header("👥 Beneficiários Responsáveis")
-    st.markdown("Encontra beneficiários que também são responsáveis. Testa `JOIN` triplo e índices B-Tree.")
-    
-    col1, col2 = st.columns(2)
-    uf = col1.text_input("UF", "SP", key="uf5").upper()
-    limit = col2.slider("Limite", 10, 500, 50, key="lim5")
-    
-    if st.button("Executar Benchmark", key="btn5", disabled=not is_logged_in):
-        resultado = executar_benchmark(
-            setup_key="beneficiarios-responsaveis",
-            exec_endpoint="executar/beneficiarios-responsaveis",
-            params={"uf": uf, "limit": limit},
-            extractor_fn=lambda d: len(d) if isinstance(d, list) else 0
-        )
-        if resultado:
-            st.session_state['r5'] = resultado
-    
-    if 'r5' in st.session_state:
-        exibir_resultados(st.session_state['r5'], "Registros")
-        if isinstance(st.session_state['r5']['data_com'], list):
-            st.subheader("Amostra dos dados")
-            st.dataframe(pd.DataFrame(st.session_state['r5']['data_com'][:20]))
-
-# Aba 6: Busca por NIS (utilitário)
-with tabs[5]:
+# Aba 6: Busca por NIS (utilitário, não-benchmark)
+with tabs[-1]:
     st.header("🆔 Busca por NIS")
-    st.markdown("Busca simples por chave primária (não é benchmark, sempre usa índice PK).")
+    st.markdown("Busca simples por chave primária (não é benchmark)")
     
     nis = st.text_input("NIS", "16110218880", key="nis6")
     
     if st.button("Buscar", key="btn6"):
-        endpoint = f"executar/buscar-beneficiario/{nis}"
-        tempo, status, data = request_api("GET", endpoint, timeout=30)
+        tempo, status, data = api_get(f"beneficiario/{nis}") 
         
         if tempo and status == 200:
             st.success(f"Encontrado em {tempo:.6f}s")
@@ -340,4 +505,4 @@ with tabs[5]:
             st.error(f"Erro {status}: {data}")
 
 st.markdown("---")
-st.caption("Desenvolvido para o Projeto de Auxílio Emergencial ⚙️")
+st.caption("Desenvolvido para o Projeto de Auxílio Emergencial⚙️")
