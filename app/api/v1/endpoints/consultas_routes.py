@@ -1,75 +1,109 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from typing import List, Optional
+from fastapi.responses import StreamingResponse
+import json
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, distinct, text
+from sqlalchemy import func, distinct
 
-from app.models.models import Beneficiario, Auxilio, Responsavel, Usuario
-from app.schemas.schemas import (
-    BeneficiarioListResponse,
-    ContagemResponse,
-    BeneficiarioResponsavelResponse,
-)
+from app.models.models import Beneficiario, Auxilio, Responsavel
+from app.schemas.schemas import BeneficiarioListResponse, ContagemResponse
 from app.core.deps import get_session
 
-router: APIRouter = APIRouter()
+router = APIRouter()
 
 # ===================================================================
-# 2. ROTAS DE EXECUÇÃO DE CONSULTAS (BENCHMARK)
+# HELPERS PARA STREAMING JSON
 # ===================================================================
 
-@router.get('/executar/total-gasto-por-uf')
-async def executar_total_gasto_por_uf(
-    uf: str = Query("CE", min_length = 2, max_length = 2),
+def serialize_row(row) -> dict:
+    """Serializa uma row do SQLAlchemy para dict."""
+    if hasattr(row, '__dict__'):
+        return {k: v for k, v in row.__dict__.items() if not k.startswith('_')}
+    return row._asdict() if hasattr(row, '_asdict') else dict(row._mapping)
+
+
+async def stream_json_array(query_stream):
+    """Streaming de arrays JSON com yield_per() para controlar buffer."""
+    yield b'['
+    first = True
+    
+    async for row in query_stream:
+        if not first:
+            yield b','
+        first = False
+        
+        data = serialize_row(row)
+        yield json.dumps(data, default = str).encode('utf-8')
+    
+    yield b']'
+
+
+async def stream_ndjson(query_stream):
+    """Streaming em formato NDJSON (mais eficiente para processamento progressivo)."""
+    async for row in query_stream:
+        data = serialize_row(row)
+        yield json.dumps(data, default = str).encode('utf-8')
+        yield b'\n'
+
+
+def create_streaming_response(stream_func, formato: str):
+    """Factory para criar StreamingResponse com media type correto."""
+    media = "application/x-ndjson" if formato == "ndjson" else "application/json"
+    return StreamingResponse(stream_func(), media_type = media)
+
+
+# ===================================================================
+# ROTAS DE AGREGAÇÃO (SEM STREAMING)
+# ===================================================================
+
+@router.get('/total-gasto-por-uf')
+async def total_gasto_por_uf(
+    uf: str = Query(min_length = 2, max_length = 2, description = "Sigla da UF"),
     db: AsyncSession = Depends(get_session)
 ):
-    """Executa a consulta de soma de gastos por UF."""
-    async with db as session:
-        query = (
-            select(func.sum(Auxilio.valor))
-            .join(Beneficiario, Beneficiario.nis_beneficiario == Auxilio.nis_beneficiario)
-            .filter(Beneficiario.uf == uf.upper())
-        )
-        result = await session.execute(query)
-        total = result.scalar_one_or_none()
-        return {"total": total or 0.0}
+    """Retorna soma total gasta por UF."""
+    query = (
+        select(func.sum(Auxilio.valor))
+        .join(Beneficiario, Beneficiario.nis_beneficiario == Auxilio.nis_beneficiario)
+        .filter(Beneficiario.uf == uf.upper())
+    )
+    result = await db.execute(query)
+    total = result.scalar_one_or_none()
+    
+    return {"uf": uf.upper(), "total": float(total or 0.0)}
 
 
-@router.get(
-    '/executar/quantidade-beneficiarios-municipio', 
-    response_model = ContagemResponse
-)
-async def executar_quantidade_beneficiarios_municipio(
+@router.get('/beneficiarios-por-municipio', response_model = ContagemResponse)
+async def beneficiarios_por_municipio(
     uf: str = Query(min_length = 2, max_length = 2),
-    municipio: str = Query(),
+    municipio: str = Query(min_length = 1),
     db: AsyncSession = Depends(get_session)
 ):
-    """Executa a consulta de contagem por município."""
-    async with db as session:
-        query = (
-            select(func.count(distinct(Beneficiario.nis_beneficiario)).label("quantidade"))
-            .join(Auxilio, Beneficiario.nis_beneficiario == Auxilio.nis_beneficiario)
-            .filter(Beneficiario.uf == uf.upper())
-            .filter(Beneficiario.municipio.ilike(f"{municipio.upper()}%"))
-        )
-        result = await session.execute(query)
-        quantidade = result.scalar_one_or_none()
-        return ContagemResponse(quantidade = quantidade or 0)
+    """Retorna contagem de beneficiários por município."""
+    query = (
+        select(func.count(distinct(Beneficiario.nis_beneficiario)))
+        .filter(Beneficiario.uf == uf.upper())
+        .filter(Beneficiario.municipio.ilike(f"%{municipio.upper()}%"))
+    )
+    result = await db.execute(query)
+    quantidade = result.scalar_one_or_none()
+    
+    return ContagemResponse(quantidade = quantidade or 0)
 
 
-@router.get(
-    '/executar/beneficiarios-responsaveis', 
-    response_model = List[BeneficiarioResponsavelResponse]
-)
-async def executar_beneficiarios_que_sao_responsaveis(
+# ===================================================================
+# ROTAS COM STREAMING
+# ===================================================================
+
+@router.get("/beneficiarios-responsaveis")
+async def beneficiarios_responsaveis(
     uf: str = Query(min_length = 2, max_length = 2),
-    skip: int = Query(0, ge = 0),
-    limit: int = Query(100, ge = 1, le = 500),
+    formato: str = Query("json", regex = "^(json|ndjson)$"),
     db: AsyncSession = Depends(get_session)
 ):
-    """Executa a consulta por beneficiários que também são responsáveis."""
-    async with db as session:
-        query = (
+    """Streama beneficiários que também são responsáveis."""
+    async def stream_query():
+        stream = await db.stream(
             select(
                 Beneficiario.nome_beneficiario,
                 Beneficiario.cpf_beneficiario,
@@ -81,125 +115,166 @@ async def executar_beneficiarios_que_sao_responsaveis(
             .join(Responsavel, Auxilio.nis_beneficiario == Responsavel.nis_responsavel)
             .filter(Beneficiario.uf == uf.upper())
             .filter(Beneficiario.nis_beneficiario == Responsavel.nis_responsavel)
-            .distinct() 
-            .offset(skip)
-            .limit(limit)
+            .distinct()
+            .execution_options(yield_per = 1000)
         )
-        result = await session.execute(query)
-        registros = result.all()
-        
-        if not registros:
-            raise HTTPException(status_code = status.HTTP_404_NOT_FOUND, detail = f"Nenhum beneficiário-responsável encontrado na UF {uf}")
-        
-        return [r._asdict() for r in registros]
+
+        stream_func = stream_ndjson if formato == "ndjson" else stream_json_array
+        async for chunk in stream_func(stream):
+            yield chunk
+
+    return create_streaming_response(stream_query, formato)
 
 
-@router.get(
-    '/executar/beneficiarios-multiplas-parcelas', 
-    response_model = List[BeneficiarioListResponse]
-)
-async def executar_beneficiarios_multiplas_parcelas(
+@router.get('/beneficiarios-multiplas-parcelas')
+async def beneficiarios_multiplas_parcelas(
     uf: str = Query(min_length = 2, max_length = 2),
     min_parcela: int = Query(1, ge = 1),
+    formato: str = Query("json", regex = "^(json|ndjson)$"),
+    stream: bool = Query(True, description = "Se False, retorna paginado"),
     skip: int = Query(0, ge = 0),
-    limit: int = Query(100, ge = 1, le = 500),
+    limit: int = Query(100, ge = 1, le = 1000),
     db: AsyncSession = Depends(get_session)
 ):
-    """Executa a consulta por beneficiários com parcelas > min_parcela."""
-    async with db as session:
-        query = (
-            select(Beneficiario)
-            .join(Auxilio, Beneficiario.nis_beneficiario == Auxilio.nis_beneficiario)
-            .filter(Auxilio.parcela > min_parcela)
-            .filter(Beneficiario.uf == uf.upper())
-            .distinct()
-            .offset(skip)
-            .limit(limit)
-        )
-        result = await session.execute(query)
+    """
+    Busca beneficiários com parcelas > min_parcela.
+    - stream=True: retorna todos os dados em streaming
+    - stream=False: retorna dados paginados
+    """
+    base_query = (
+        select(Beneficiario)
+        .join(Auxilio, Beneficiario.nis_beneficiario == Auxilio.nis_beneficiario)
+        .filter(Auxilio.parcela > min_parcela)
+        .filter(Beneficiario.uf == uf.upper())
+        .distinct()
+    )
+    
+    if not stream:
+        # Versão paginada
+        query = base_query.offset(skip).limit(limit)
+        result = await db.execute(query)
         beneficiarios = result.scalars().all()
         
         if not beneficiarios:
-            raise HTTPException(status_code = status.HTTP_404_NOT_FOUND, detail = f"Nenhum beneficiário encontrado com parcela > {min_parcela} na UF {uf}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail = f"Nenhum beneficiário com parcela > {min_parcela} na UF {uf}"
+            )
         
         return beneficiarios
+    
+    # Versão streaming
+    async def stream_query():
+        stream_result = await db.stream(
+            base_query.execution_options(yield_per = 500)
+        )
+        stream_func = stream_ndjson if formato == "ndjson" else stream_json_array
+        async for chunk in stream_func(stream_result):
+            yield chunk
+
+    return create_streaming_response(stream_query, formato)
 
 
-@router.get(
-    '/executar/beneficiarios-por-nome', 
-    response_model = List[BeneficiarioListResponse]
-)
-async def executar_beneficiarios_por_nome(
-    nome: str = Query(),
+@router.get('/beneficiarios-por-nome')
+async def beneficiarios_por_nome(
+    nome: str = Query(min_length = 2),
+    formato: str = Query("json", regex = "^(json|ndjson)$"),
+    stream: bool = Query(True),
     skip: int = Query(0, ge = 0),
-    limit: int = Query(100, ge = 1, le = 500),
+    limit: int = Query(100, ge = 1, le = 1000),
     db: AsyncSession = Depends(get_session)
 ):
-    """Executa a consulta por nome (com 'NOME%')."""
-    async with db as session:
-        query = (
-            select(Beneficiario)
-            .join(Auxilio, Beneficiario.nis_beneficiario == Auxilio.nis_beneficiario)
-            .filter(Beneficiario.nome_beneficiario.ilike(f"{nome.upper()}%"))
-            .distinct()
-            .offset(skip)
-            .limit(limit)
-        )
-        result = await session.execute(query)
+    """
+    Busca beneficiários por substring do nome.
+    - stream=True: streaming completo
+    - stream=False: paginado
+    """
+    base_query = (
+        select(Beneficiario)
+        .filter(Beneficiario.nome_beneficiario.ilike(f"%{nome.upper()}%"))
+        .distinct()
+    )
+    
+    if not stream:
+        query = base_query.offset(skip).limit(limit)
+        result = await db.execute(query)
         beneficiarios = result.scalars().all()
         
         if not beneficiarios:
-            raise HTTPException(status_code = status.HTTP_404_NOT_FOUND, detail = f"Nenhum beneficiário encontrado com nome iniciando em '{nome}'")
+            raise HTTPException(
+                status_code = status.HTTP_404_NOT_FOUND,
+                detail = f"Nenhum beneficiário com nome contendo '{nome}'"
+            )
         
         return beneficiarios
+    
+    async def stream_query():
+        stream_result = await db.stream(
+            base_query.execution_options(yield_per = 500)
+        )
+        stream_func = stream_ndjson if formato == "ndjson" else stream_json_array
+        async for chunk in stream_func(stream_result):
+            yield chunk
+
+    return create_streaming_response(stream_query, formato)
 
 
-@router.get(
-    '/executar/listar-beneficiarios', 
-    response_model = List[BeneficiarioListResponse]
-)
-async def executar_listar_beneficiarios(
-    nome: Optional[str] = None,
-    uf: Optional[str] = None,
-    municipio: Optional[str] = None,
-    limit: int = 1000,
+@router.get('/listar-beneficiarios')
+async def listar_beneficiarios(
+    nome: str | None = None,
+    uf: str | None = None,
+    municipio: str | None = None,
+    formato: str = Query("json", regex="^(json|ndjson)$"),
+    stream: bool = Query(True),
+    skip: int = Query(0, ge = 0),
+    limit: int = Query(1000, ge = 1, le = 5000),
     db: AsyncSession = Depends(get_session)
 ):
-    """Executa a consulta de listagem geral com filtros opcionais."""
-    async with db as session: 
-        query = select(Beneficiario)
+    """
+    Lista beneficiários com filtros opcionais.
+    - stream=True: streaming completo
+    - stream=False: paginado
+    """
+    query = select(Beneficiario)
 
-        if nome:
-            query = query.filter(Beneficiario.nome_beneficiario.ilike(f"{nome.upper()}%"))
-        if uf:
-            query = query.filter(Beneficiario.uf == uf.upper())
-        if municipio:
-            query = query.filter(Beneficiario.municipio.ilike(f"{municipio.upper()}%"))
+    if nome:
+        query = query.filter(Beneficiario.nome_beneficiario.ilike(f"{nome.upper()}%"))
+    if uf:
+        query = query.filter(Beneficiario.uf == uf.upper())
+    if municipio:
+        query = query.filter(Beneficiario.municipio.ilike(f"{municipio.upper()}%"))
 
-        query = query.order_by(Beneficiario.nis_beneficiario).limit(limit)
-        result = await session.execute(query)
-        rows = result.scalars().all()
-        return rows
+    query = query.order_by(Beneficiario.nis_beneficiario)
+    
+    if not stream:
+        result = await db.execute(query.offset(skip).limit(limit))
+        return result.scalars().all()
+    
+    async def stream_query():
+        stream_result = await db.stream(
+            query.execution_options(yield_per = 1000)
+        )
+        stream_func = stream_ndjson if formato == "ndjson" else stream_json_array
+        async for chunk in stream_func(stream_result):
+            yield chunk
+
+    return create_streaming_response(stream_query, formato)
 
 
-@router.get(
-    '/executar/buscar-beneficiario/{nis}', 
-    response_model = BeneficiarioListResponse
-)
-async def executar_buscar_beneficiario(
+@router.get('/beneficiario/{nis}', response_model = BeneficiarioListResponse)
+async def buscar_beneficiario(
     nis: str,
     db: AsyncSession = Depends(get_session)
 ):
-    """Executa a busca de um beneficiário por NIS (Chave Primária)."""
-    async with db as session:
-        query = select(Beneficiario).filter(Beneficiario.nis_beneficiario == nis)
-        result = await session.execute(query)
-        beneficiario = result.scalar_one_or_none()
-        
-        if not beneficiario:
-            raise HTTPException(
-                status_code = status.HTTP_404_NOT_FOUND,
-                detail = f"Beneficiário com NIS {nis} não encontrado"
-            )
-        
-        return beneficiario
+    """Busca beneficiário por NIS (chave primária)."""
+    query = select(Beneficiario).filter(Beneficiario.nis_beneficiario == nis)
+    result = await db.execute(query)
+    beneficiario = result.scalar_one_or_none()
+    
+    if not beneficiario:
+        raise HTTPException(
+            status_code = status.HTTP_404_NOT_FOUND,
+            detail = f"Beneficiário com NIS {nis} não encontrado"
+        )
+    
+    return beneficiario
