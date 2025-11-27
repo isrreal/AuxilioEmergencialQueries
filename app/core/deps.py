@@ -21,6 +21,8 @@ class TokenData(BaseModel):
     """Schema para dados do token JWT."""
     user_id: int | None = None
 
+# Um gerador assíncrono: retorna um lote de uma conexão assíncrona, ou um objeto None.
+
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency para obter sessão do banco de dados.
@@ -30,7 +32,6 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
     finally:
         await session.close()
-
 
 async def get_current_user(
     db: AsyncSession = Depends(get_session),
@@ -42,6 +43,7 @@ async def get_current_user(
     credentials_exception = HTTPException(
         status_code = status.HTTP_401_UNAUTHORIZED,
         detail = "Não foi possível autenticar a credencial.",
+        # Diz ao cliente que o server só aceitará seu acesso com um token correto (tipo Bearer).
         headers = {"WWW-Authenticate": "Bearer"},
     )
 

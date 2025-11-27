@@ -1,5 +1,5 @@
 from pytz import timezone
-from typing import Optional, Dict
+from typing import Dict
 from datetime import datetime, timedelta
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.future import select
@@ -12,10 +12,10 @@ from app.core.security import verificar_senha
 
 from app.models.models import Usuario
 
-
+# Define em qual rota o token deve ser gerado.
 oauth2_schema = OAuth2PasswordBearer(tokenUrl = f"{settings.API_V1_STR}/login")
 
-async def autenticar(email: EmailStr, senha: str, db: AsyncSession) -> Optional[Usuario]:
+async def autenticar(email: EmailStr, senha: str, db: AsyncSession) -> Usuario | None:
     """
     Verifica as credenciais de um usuário no banco de dados.
 
@@ -28,7 +28,7 @@ async def autenticar(email: EmailStr, senha: str, db: AsyncSession) -> Optional[
         db (AsyncSession): A sessão assíncrona do SQLAlchemy para consulta.
 
     Returns:
-        Optional[Usuario]: O objeto `UsuarioModel` correspondente se
+        Usuario ou None: O objeto `UsuarioModel` correspondente se
             as credenciais estiverem corretas. Retorna `None` caso o email
             não seja encontrado ou a senha esteja incorreta.
     """
@@ -46,7 +46,7 @@ async def autenticar(email: EmailStr, senha: str, db: AsyncSession) -> Optional[
 
 
 
-def _criar_token(tipo_token: str, tempo_vida: timedelta, sub: str) -> str:
+def _criar_token(tipo_token: str, tempo_vida: timedelta, subject: str) -> str:
     """
     Cria um token JWT.
     
@@ -56,7 +56,7 @@ def _criar_token(tipo_token: str, tempo_vida: timedelta, sub: str) -> str:
         sub: Subject (geralmente o ID do usuário)
         
     Returns:
-        str: Token JWT codificado
+        str: Token JWT criptografado
     """
     fortaleza = timezone("America/Fortaleza")
     expira = datetime.now(tz = fortaleza) + tempo_vida
@@ -65,9 +65,9 @@ def _criar_token(tipo_token: str, tempo_vida: timedelta, sub: str) -> str:
         "type": tipo_token,
         "exp": expira,
         "iat": datetime.now(tz = fortaleza),
-        "sub": str(sub),
+        "sub": str(subject), # Identificação única do usuário autenticado
     }
-    
+    # retorna um token criptografado usando bcrypt
     return jwt.encode(
         payload, 
         settings.JWT_SECRET, 
@@ -75,7 +75,7 @@ def _criar_token(tipo_token: str, tempo_vida: timedelta, sub: str) -> str:
     )
 
 
-def criar_token_acesso(sub: str) -> str:
+def criar_token_acesso(subject: str) -> str:
     """
     Cria um token de acesso JWT.
     
@@ -88,11 +88,12 @@ def criar_token_acesso(sub: str) -> str:
     return _criar_token(
         tipo_token = "access_token",
         tempo_vida = timedelta(minutes = settings.ACCESS_TOKEN_EXPIRE_MINUTES),
-        sub = sub
+        # identificador de usuário autenticado
+        subject = subject
     )
 
 
-def criar_token_refresh(sub: str) -> str:
+def criar_token_refresh(subject: str) -> str:
     """
     Cria um token de refresh (vida mais longa).
     
@@ -105,11 +106,11 @@ def criar_token_refresh(sub: str) -> str:
     return _criar_token(
         tipo_token = "refresh_token",
         tempo_vida = timedelta(days = 30), 
-        sub = sub
+        subject = subject
     )
 
 
-def decodificar_token(token: str) -> dict:
+def decodificar_token(token: str) -> Dict:
     """
     Decodifica e valida um token JWT.
     
@@ -143,7 +144,7 @@ def validar_tipo_token(payload: Dict, tipo_esperado: str) -> bool:
     return payload.get("type") == tipo_esperado
 
 
-def extrair_user_id(payload: Dict) -> Optional[str]:
+def extrair_user_id(payload: Dict) -> str | None:
     """
     Extrai o ID do usuário do payload do token.
     

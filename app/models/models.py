@@ -18,6 +18,10 @@ class Responsavel(settings.DBBaseModel):
     cpf_responsavel = Column(String)
     nome_responsavel = Column(String)
 
+    # Define o lado "um-para-muitos" da relação com Beneficiario.
+    # back_populates conecta este atributo ao atributo "responsavel" na classe Beneficiario,
+    # criando um relacionamento bidirecional: ambos os lados permanecem sincronizados.
+    # um responsável tem vários beneficiários
     beneficiarios = relationship("Beneficiario", back_populates = "responsavel")
 
 
@@ -47,7 +51,7 @@ class Auxilio(settings.DBBaseModel):
     valor = Column(Float)
     nis_beneficiario = Column(String, ForeignKey("beneficiario.nis_beneficiario"))
 
-    beneficiario = relationship("Beneficiario", back_populates="auxilios")
+    beneficiario = relationship("Beneficiario", back_populates = "auxilios")
 
 class Usuario(settings.DBBaseModel):
     __tablename__ = "usuarios"

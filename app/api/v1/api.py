@@ -49,7 +49,7 @@ async def login(
 
     return JSONResponse(
         content = {
-            "access_token": criar_token_acesso(sub = usuario.id),
+            "access_token": criar_token_acesso(subject = usuario.id),
             "token_type": "bearer"
         },
         status_code = status.HTTP_200_OK
