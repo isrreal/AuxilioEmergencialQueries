@@ -7,15 +7,23 @@ services:
     environment:
       POSTGRES_DB: emergencial_aid_db
     volumes:
+      # Monta o volume nomeado "postgres_data" no diretório onde o PostgreSQL
+      # armazena seus dados. Isso garante persistência mesmo após remover o container.
+      
       - postgres_data:/var/lib/postgresql/data
       - ./dataset:/data         
     ports:
       - "5430:5432"
     healthcheck:
+      # Diz ao docker que comando será executado num shell. Verifica se o servidor emergencial_aid_db está pronto para aceitar conexões.
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d emergencial_aid_db"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+# Para rodar somente a API: docker compose up db api
+# docker compose run cria um container isolado e temporário; não sobe dependências,
+# não executa healthchecks e não expõe portas automaticamente.
 
   api:
     build: .
@@ -34,6 +42,7 @@ services:
       db:
         condition: service_healthy
 
+# Container de visualização streamlit.
   app_runner:
     build: .
     container_name: emergencial_aid_runner
@@ -44,14 +53,23 @@ services:
     env_file:
       - .env
     environment:
+      # Diz ao Python que o diretório "/app" deve ser adicionado ao path de módulo.
       PYTHONPATH: /app
+
+      # No docker compose, quando refere-se ao enderço do container, colocar seu nome: e.g "db"
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/emergencial_aid_db
+
+    # Só inicia "app_runner" depois que o serviço "db" for marcado como 'healthy'
+    # pelo healthcheck. Não garante funcionamento contínuo, apenas a ordem de inicialização.
     depends_on:
       db:
         condition: service_healthy
     ports:
       - "8501:8501"
 
+# Declaração dos volumes nomeados usados nos serviços acima.
+# O Docker criaria volumes automaticamente se não declarados, mas declarar explicitamente
+# dá clareza e permite controle, backup e versionamento das configurações.
 
 volumes:
-  postgres_data:
+  postgres_data: # fica em /var/lib/docker/volumes/postgres_data/_data/
