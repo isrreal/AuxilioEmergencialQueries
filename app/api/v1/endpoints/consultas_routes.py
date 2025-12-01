@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, distinct
-
 from app.models.models import Beneficiario, Auxilio, Responsavel
 from app.schemas.schemas import BeneficiarioListResponse, ContagemResponse
 from app.core.deps import get_session
@@ -10,7 +9,8 @@ from app.core.deps import get_session
 from app.utils.utils import (
     stream_json_array,
     stream_ndjson,
-    create_streaming_response
+    create_streaming_response,
+    configurar_estrategia_busca
 )
 
 router: APIRouter = APIRouter()
@@ -22,9 +22,12 @@ router: APIRouter = APIRouter()
 @router.get('/total-gasto-por-uf')
 async def total_gasto_por_uf(
         uf: str = Query(min_length = 2, max_length = 2, description = "Sigla da UF"),
+        usar_indice: bool = Query(True, description = "Se False, força Sequential Scan"),
         db: AsyncSession = Depends(get_session)
 ):
     """Retorna soma total gasta por UF."""
+    await configurar_estrategia_busca(db, usar_indice)
+
     query = (
         select(func.sum(Auxilio.valor))
         .join(Beneficiario, Beneficiario.nis_beneficiario == Auxilio.nis_beneficiario)
@@ -40,18 +43,21 @@ async def total_gasto_por_uf(
 async def beneficiarios_por_municipio(
         uf: str = Query(min_length = 2, max_length = 2),
         municipio: str = Query(min_length = 1),
+        usar_indice: bool = Query(True, description = "Se False, ignora índices GIN/B-Tree"),
         db: AsyncSession = Depends(get_session)
 ):
     """Retorna contagem de beneficiários por município."""
+    await configurar_estrategia_busca(db, usar_indice)
+
     query = (
         select(func.count(distinct(Beneficiario.nis_beneficiario)))
         .filter(Beneficiario.uf == uf.upper())
-        .filter(Beneficiario.municipio.ilike(f"%{municipio.upper()}%")) # case insensitive like
+        .filter(Beneficiario.municipio.ilike(f"%{municipio.upper()}%")) 
     )
     result = await db.execute(query)
     quantidade = result.scalar_one_or_none()
     
-    return ContagemResponse(quantidade = quantidade or 0)
+    return ContagemResponse(quantidade=quantidade or 0)
 
 
 # ===================================================================
@@ -62,10 +68,14 @@ async def beneficiarios_por_municipio(
 async def beneficiarios_responsaveis(
         uf: str = Query(min_length = 2, max_length = 2),
         formato: str = Query("json", regex = "^(json|ndjson)$"),
+        usar_indice: bool = Query(True, description = "Se False, força Sequential Scan no JOIN"),
         db: AsyncSession = Depends(get_session)
 ):
     """Streama beneficiários que também são responsáveis."""
+    await configurar_estrategia_busca(db, usar_indice)
+
     async def stream_query():
+        # A configuração do banco persiste durante o stream pois é a mesma sessão/transação
         stream = await db.stream(
             select(
                 Beneficiario.nome_beneficiario,
@@ -97,13 +107,12 @@ async def beneficiarios_multiplas_parcelas(
         stream: bool = Query(True, description = "Se False, retorna paginado"),
         skip: int = Query(0, ge = 0),
         limit: int = Query(100, ge = 1, le = 1000),
+        usar_indice: bool = Query(True),
         db: AsyncSession = Depends(get_session)
 ):
-    """
-    Busca beneficiários com parcelas > min_parcela.
-    - stream=True: retorna todos os dados em streaming
-    - stream=False: retorna dados paginados
-    """
+    """Busca beneficiários com parcelas > min_parcela."""
+    await configurar_estrategia_busca(db, usar_indice)
+
     base_query = (
         select(Beneficiario)
         .join(Auxilio, Beneficiario.nis_beneficiario == Auxilio.nis_beneficiario)
@@ -113,7 +122,6 @@ async def beneficiarios_multiplas_parcelas(
     )
     
     if not stream:
-        # Versão paginada
         query = base_query.offset(skip).limit(limit)
         result = await db.execute(query)
         beneficiarios = result.scalars().all()
@@ -121,12 +129,10 @@ async def beneficiarios_multiplas_parcelas(
         if not beneficiarios:
             raise HTTPException(
                 status_code = status.HTTP_404_NOT_FOUND,
-                detail = f"Nenhum beneficiário com parcela > {min_parcela} na UF {uf}"
+                detail = f"Nenhum beneficiário encontrado."
             )
-        
         return beneficiarios
     
-    # Versão streaming
     async def stream_query():
         stream_result = await db.stream(
             base_query.execution_options(yield_per = 500)
@@ -145,13 +151,12 @@ async def beneficiarios_por_nome(
         stream: bool = Query(True),
         skip: int = Query(0, ge = 0),
         limit: int = Query(100, ge = 1, le = 1000),
+        usar_indice: bool = Query(True),
         db: AsyncSession = Depends(get_session)
 ):
-    """
-    Busca beneficiários por substring do nome.
-    - stream=True: streaming completo
-    - stream=False: paginado
-    """
+    """Busca beneficiários por substring do nome."""
+    await configurar_estrategia_busca(db, usar_indice)
+
     base_query = (
         select(Beneficiario)
         .filter(Beneficiario.nome_beneficiario.ilike(f"%{nome.upper()}%"))
@@ -168,7 +173,6 @@ async def beneficiarios_por_nome(
                 status_code = status.HTTP_404_NOT_FOUND,
                 detail = f"Nenhum beneficiário com nome contendo '{nome}'"
             )
-        
         return beneficiarios
     
     async def stream_query():
@@ -191,13 +195,12 @@ async def listar_beneficiarios(
         stream: bool = Query(True),
         skip: int = Query(0, ge = 0),
         limit: int = Query(1000, ge = 1, le = 5000),
+        usar_indice: bool = Query(True),
         db: AsyncSession = Depends(get_session)
 ):
-    """
-    Lista beneficiários com filtros opcionais.
-    - stream = True: streaming completo
-    - stream = False: paginado
-    """
+    """Lista beneficiários com filtros opcionais."""
+    await configurar_estrategia_busca(db, usar_indice)
+
     query = select(Beneficiario)
 
     if nome:
@@ -227,9 +230,12 @@ async def listar_beneficiarios(
 @router.get('/beneficiario/{nis}', response_model = BeneficiarioListResponse)
 async def buscar_beneficiario(
         nis: str,
+        usar_indice: bool = Query(True, description = "Mesmo PK Lookup pode ser forçado a Seq Scan"),
         db: AsyncSession = Depends(get_session)
 ):
     """Busca beneficiário por NIS (chave primária)."""
+    await configurar_estrategia_busca(db, usar_indice)
+
     query = select(Beneficiario).filter(Beneficiario.nis_beneficiario == nis)
     result = await db.execute(query)
     beneficiario = result.scalar_one_or_none()

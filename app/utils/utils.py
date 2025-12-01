@@ -1,5 +1,8 @@
 import json
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+
 
 def serialize_row(row) -> dict:
     """Serializa uma row do SQLAlchemy para dict."""
@@ -31,8 +34,19 @@ async def stream_ndjson(query_stream):
         yield json.dumps(data, default = str).encode('utf-8')
         yield b'\n'
 
+async def configurar_estrategia_busca(db: AsyncSession, usar_indice: bool):
+    if not usar_indice:
+        #enable_indexscan: Permite ao planner usar B-Tree ou outros índices normais para acessar as linhas da tabela.
+        #enable_indexonlyscan: Permite usar Index Only Scan, que é quando o PostgreSQL consegue ler somente o índice sem precisar ir na tabela base.
+        #enable_bitmapscan: É um método de leitura de dados que combina índices e leitura sequencial eficiente.
+
+        await db.execute(text("SET LOCAL enable_indexscan = OFF"))
+        await db.execute(text("SET LOCAL enable_indexonlyscan = OFF"))
+        await db.execute(text("SET LOCAL enable_bitmapscan = OFF"))
+
 
 def create_streaming_response(stream_func, formato: str):
     """Factory para criar StreamingResponse com media type correto."""
     media = "application/x-ndjson" if formato == "ndjson" else "application/json"
     return StreamingResponse(stream_func(), media_type = media)
+
