@@ -21,8 +21,8 @@ router: APIRouter = APIRouter()
 
 @router.get('/total-gasto-por-uf')
 async def total_gasto_por_uf(
-    uf: str = Query(min_length = 2, max_length = 2, description = "Sigla da UF"),
-    db: AsyncSession = Depends(get_session)
+        uf: str = Query(min_length = 2, max_length = 2, description = "Sigla da UF"),
+        db: AsyncSession = Depends(get_session)
 ):
     """Retorna soma total gasta por UF."""
     query = (
@@ -38,15 +38,15 @@ async def total_gasto_por_uf(
 
 @router.get('/beneficiarios-por-municipio', response_model = ContagemResponse)
 async def beneficiarios_por_municipio(
-    uf: str = Query(min_length = 2, max_length = 2),
-    municipio: str = Query(min_length = 1),
-    db: AsyncSession = Depends(get_session)
+        uf: str = Query(min_length = 2, max_length = 2),
+        municipio: str = Query(min_length = 1),
+        db: AsyncSession = Depends(get_session)
 ):
     """Retorna contagem de beneficiários por município."""
     query = (
         select(func.count(distinct(Beneficiario.nis_beneficiario)))
         .filter(Beneficiario.uf == uf.upper())
-        .filter(Beneficiario.municipio.ilike(f"%{municipio.upper()}%"))
+        .filter(Beneficiario.municipio.ilike(f"%{municipio.upper()}%")) # case insensitive like
     )
     result = await db.execute(query)
     quantidade = result.scalar_one_or_none()
@@ -60,9 +60,9 @@ async def beneficiarios_por_municipio(
 
 @router.get("/beneficiarios-responsaveis")
 async def beneficiarios_responsaveis(
-    uf: str = Query(min_length = 2, max_length = 2),
-    formato: str = Query("json", regex = "^(json|ndjson)$"),
-    db: AsyncSession = Depends(get_session)
+        uf: str = Query(min_length = 2, max_length = 2),
+        formato: str = Query("json", regex = "^(json|ndjson)$"),
+        db: AsyncSession = Depends(get_session)
 ):
     """Streama beneficiários que também são responsáveis."""
     async def stream_query():
@@ -91,13 +91,13 @@ async def beneficiarios_responsaveis(
 
 @router.get('/beneficiarios-multiplas-parcelas')
 async def beneficiarios_multiplas_parcelas(
-    uf: str = Query(min_length = 2, max_length = 2),
-    min_parcela: int = Query(1, ge = 1),
-    formato: str = Query("json", regex = "^(json|ndjson)$"),
-    stream: bool = Query(True, description = "Se False, retorna paginado"),
-    skip: int = Query(0, ge = 0),
-    limit: int = Query(100, ge = 1, le = 1000),
-    db: AsyncSession = Depends(get_session)
+        uf: str = Query(min_length = 2, max_length = 2),
+        min_parcela: int = Query(1, ge = 1),
+        formato: str = Query("json", regex = "^(json|ndjson)$"),
+        stream: bool = Query(True, description = "Se False, retorna paginado"),
+        skip: int = Query(0, ge = 0),
+        limit: int = Query(100, ge = 1, le = 1000),
+        db: AsyncSession = Depends(get_session)
 ):
     """
     Busca beneficiários com parcelas > min_parcela.
@@ -140,12 +140,12 @@ async def beneficiarios_multiplas_parcelas(
 
 @router.get('/beneficiarios-por-nome')
 async def beneficiarios_por_nome(
-    nome: str = Query(min_length = 2),
-    formato: str = Query("json", regex = "^(json|ndjson)$"),
-    stream: bool = Query(True),
-    skip: int = Query(0, ge = 0),
-    limit: int = Query(100, ge = 1, le = 1000),
-    db: AsyncSession = Depends(get_session)
+        nome: str = Query(min_length = 2),
+        formato: str = Query("json", regex = "^(json|ndjson)$"),
+        stream: bool = Query(True),
+        skip: int = Query(0, ge = 0),
+        limit: int = Query(100, ge = 1, le = 1000),
+        db: AsyncSession = Depends(get_session)
 ):
     """
     Busca beneficiários por substring do nome.
@@ -184,19 +184,19 @@ async def beneficiarios_por_nome(
 
 @router.get('/listar-beneficiarios')
 async def listar_beneficiarios(
-    nome: str | None = None,
-    uf: str | None = None,
-    municipio: str | None = None,
-    formato: str = Query("json", regex = "^(json|ndjson)$"),
-    stream: bool = Query(True),
-    skip: int = Query(0, ge = 0),
-    limit: int = Query(1000, ge = 1, le = 5000),
-    db: AsyncSession = Depends(get_session)
+        nome: str | None = None,
+        uf: str | None = None,
+        municipio: str | None = None,
+        formato: str = Query("json", regex = "^(json|ndjson)$"),
+        stream: bool = Query(True),
+        skip: int = Query(0, ge = 0),
+        limit: int = Query(1000, ge = 1, le = 5000),
+        db: AsyncSession = Depends(get_session)
 ):
     """
     Lista beneficiários com filtros opcionais.
-    - stream=True: streaming completo
-    - stream=False: paginado
+    - stream = True: streaming completo
+    - stream = False: paginado
     """
     query = select(Beneficiario)
 
@@ -226,8 +226,8 @@ async def listar_beneficiarios(
 
 @router.get('/beneficiario/{nis}', response_model = BeneficiarioListResponse)
 async def buscar_beneficiario(
-    nis: str,
-    db: AsyncSession = Depends(get_session)
+        nis: str,
+        db: AsyncSession = Depends(get_session)
 ):
     """Busca beneficiário por NIS (chave primária)."""
     query = select(Beneficiario).filter(Beneficiario.nis_beneficiario == nis)
