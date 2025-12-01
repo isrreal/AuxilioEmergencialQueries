@@ -5,7 +5,8 @@ from sqlalchemy import (
     Float, 
     Text, 
     ForeignKey, 
-    Boolean
+    Boolean,
+    Index
 )
 from sqlalchemy.orm import relationship
 from app.core.configs import settings
@@ -31,13 +32,35 @@ class Beneficiario(settings.DBBaseModel):
     nis_beneficiario = Column(String, primary_key = True)
     cpf_beneficiario = Column(String)
     nome_beneficiario = Column(String)
-    uf = Column(String(2))
+    # Criando um índice baseado em UF.
+    uf = Column(String(2), index = True)
     codigo_ibge_municipio = Column(Integer)
     municipio = Column(Text)
     nis_responsavel = Column(String, ForeignKey("responsavel.nis_responsavel"))
 
     responsavel = relationship("Responsavel", back_populates = "beneficiarios")
     auxilios = relationship("Auxilio", back_populates = "beneficiario")
+
+    # índices compostos
+
+    __table_args__ = (
+        # Para ILIKE 'nome%'.
+        # Índice baseado em árvore B para serem otimizadas para buscas por "range"
+        Index(
+            "idx_beneficiario_nome",
+            "nome_beneficiario",
+            postgresql_ops = {"nome_beneficiario": "text_pattern_ops"}
+        ),
+
+        # Para ILIKE '%termo%' com TRGM
+        # Generalized Inversed ? (GIN), é um índice útil para buscas em estruturas dentro de outras estruturas (como arrays)
+        Index(
+            "idx_municipio_trgm",
+            "municipio",
+            postgresql_using = "gin",
+            postgresql_ops = {"municipio": "gin_trgm_ops"}
+        ),
+    )
 
 
 class Auxilio(settings.DBBaseModel):
