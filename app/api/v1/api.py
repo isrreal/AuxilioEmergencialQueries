@@ -3,17 +3,11 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.endpoints import consultas_routes, setup_routes
+from app.api.v1.endpoints import consultas_routes
 from app.core.deps import get_session
 from app.core.auth import criar_token_acesso, autenticar
 
 api_router: APIRouter = APIRouter()
-
-api_router.include_router(
-    setup_routes.router,
-    prefix = "/setup",
-    tags = ["Setup de Índices"]
-)
 
 api_router.include_router(
     consultas_routes.router,
