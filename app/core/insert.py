@@ -232,6 +232,39 @@ def peak_memory_mb() -> float:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
 
 
+def current_memory_mb(status_path: Path = Path("/proc/self/status")) -> float:
+    """Retorna o RSS atual do processo em MiB a partir do procfs do Linux."""
+    with status_path.open(encoding="utf-8") as status_file:
+        for line in status_file:
+            if line.startswith("VmRSS:"):
+                rss_kib = int(line.split()[1])
+                return rss_kib / 1024
+
+    raise RuntimeError(f"VmRSS não encontrado em {status_path}")
+
+
+def memory_snapshot(status_path: Path = Path("/proc/self/status")) -> dict[str, float]:
+    """Captura RSS atual e pico de RSS usando a mesma fonte do procfs."""
+    values: dict[str, float] = {}
+    proc_fields = {"VmRSS:": "current_rss_mb", "VmHWM:": "peak_rss_mb"}
+    with status_path.open(encoding="utf-8") as status_file:
+        for line in status_file:
+            fields = line.split()
+            if fields and fields[0] in proc_fields:
+                values[proc_fields[fields[0]]] = int(fields[1]) / 1024
+
+    missing = set(proc_fields.values()) - values.keys()
+    if missing:
+        formatted = ", ".join(sorted(missing))
+        raise RuntimeError(f"campos de memória ausentes em {status_path}: {formatted}")
+    return values
+
+
+def dataframe_memory_mb(dataframe: pd.DataFrame) -> float:
+    """Calcula a memória profunda ocupada por um DataFrame em MiB."""
+    return float(dataframe.memory_usage(index=True, deep=True).sum()) / (1024**2)
+
+
 def write_report(report: dict, destination: Path) -> None:
     """Serializa o relatório em stdout ou em um arquivo JSON."""
     serialized = json.dumps(report, ensure_ascii=False, indent=2)
@@ -245,6 +278,7 @@ def write_report(report: dict, destination: Path) -> None:
 async def main(config: IngestionConfig) -> None:
     started_at = datetime.now(UTC)
     total_started = perf_counter()
+    ingestion_start_memory = memory_snapshot()
     max_rows_description = config.max_rows if config.max_rows is not None else "todas"
     print(
         "Configuração da ingestão: "
@@ -263,6 +297,8 @@ async def main(config: IngestionConfig) -> None:
     setup_write_started = perf_counter()
     await copy_from_dataframe("responsavel", df_indefinido)
     setup_write_seconds = perf_counter() - setup_write_started
+    after_setup_memory = memory_snapshot()
+    del df_indefinido
 
     print("Lendo CSV...", file=sys.stderr)
 
@@ -296,12 +332,14 @@ async def main(config: IngestionConfig) -> None:
     progress = tqdm(total=n_chunks, desc="Processando chunks", file=sys.stderr)
     chunk_index = 0
     while True:
+        before_read_memory = memory_snapshot()
         read_started = perf_counter()
         try:
             chunk = next(csv_iterator)
         except StopIteration:
             break
         read_seconds = perf_counter() - read_started
+        after_read_memory = memory_snapshot()
         chunk_index += 1
         total_source_rows += len(chunk)
 
@@ -335,6 +373,13 @@ async def main(config: IngestionConfig) -> None:
             beneficiario_before_global_dedup - len(df_beneficiario)
         )
         transform_seconds = perf_counter() - transform_started
+        after_transform_memory = memory_snapshot()
+        dataframe_memory = {
+            "source_chunk": dataframe_memory_mb(chunk),
+            "responsavel": dataframe_memory_mb(df_responsavel),
+            "beneficiario": dataframe_memory_mb(df_beneficiario),
+            "auxilio": dataframe_memory_mb(df_auxilio),
+        }
 
         write_started = perf_counter()
         if len(df_responsavel) > 0:
@@ -349,6 +394,7 @@ async def main(config: IngestionConfig) -> None:
             await copy_from_dataframe("auxilio", df_auxilio)
             total_auxilio += len(df_auxilio)
         write_seconds = perf_counter() - write_started
+        after_write_memory = memory_snapshot()
 
         total_read_seconds += read_seconds
         total_transform_seconds += transform_seconds
@@ -364,39 +410,56 @@ async def main(config: IngestionConfig) -> None:
         )
 
         chunk_elapsed = read_seconds + transform_seconds + write_seconds
-        chunks.append(
-            {
-                "index": chunk_index,
-                "source_rows": len(chunk),
-                "candidates_after_chunk_cleaning": {
-                    "responsavel": prepared.counts.responsavel_candidates,
-                    "beneficiario": prepared.counts.beneficiario_candidates,
-                    "auxilio": prepared.counts.auxilio_candidates,
-                },
-                "inserted": {
-                    "responsavel": len(df_responsavel),
-                    "beneficiario": len(df_beneficiario),
-                    "auxilio": len(df_auxilio),
-                },
-                "discarded": {
-                    "responsavel": prepared.counts.responsavel_discarded,
-                    "beneficiario": prepared.counts.beneficiario_discarded,
-                    "auxilio": prepared.counts.auxilio_discarded,
-                    "responsavel_cross_chunk_duplicate": responsavel_cross_chunk_duplicates,
-                    "beneficiario_cross_chunk_duplicate": beneficiario_cross_chunk_duplicates,
-                },
-                "timing_seconds": {
-                    "read": read_seconds,
-                    "transform": transform_seconds,
-                    "write": write_seconds,
-                    "total": chunk_elapsed,
-                },
-                "source_rows_per_second": (
-                    len(chunk) / chunk_elapsed if chunk_elapsed > 0 else None
-                ),
-                "peak_memory_mb": peak_memory_mb(),
-            }
-        )
+        chunk_report = {
+            "index": chunk_index,
+            "source_rows": len(chunk),
+            "candidates_after_chunk_cleaning": {
+                "responsavel": prepared.counts.responsavel_candidates,
+                "beneficiario": prepared.counts.beneficiario_candidates,
+                "auxilio": prepared.counts.auxilio_candidates,
+            },
+            "inserted": {
+                "responsavel": len(df_responsavel),
+                "beneficiario": len(df_beneficiario),
+                "auxilio": len(df_auxilio),
+            },
+            "discarded": {
+                "responsavel": prepared.counts.responsavel_discarded,
+                "beneficiario": prepared.counts.beneficiario_discarded,
+                "auxilio": prepared.counts.auxilio_discarded,
+                "responsavel_cross_chunk_duplicate": responsavel_cross_chunk_duplicates,
+                "beneficiario_cross_chunk_duplicate": beneficiario_cross_chunk_duplicates,
+            },
+            "timing_seconds": {
+                "read": read_seconds,
+                "transform": transform_seconds,
+                "write": write_seconds,
+                "total": chunk_elapsed,
+            },
+            "source_rows_per_second": (
+                len(chunk) / chunk_elapsed if chunk_elapsed > 0 else None
+            ),
+            "peak_memory_mb": peak_memory_mb(),
+            "memory_mb": {
+                "before_read": before_read_memory,
+                "after_read": after_read_memory,
+                "after_transform": after_transform_memory,
+                "after_write": after_write_memory,
+                "dataframes_after_transform": dataframe_memory,
+            },
+            "deduplication_state": {
+                "responsavel_identifiers": len(nis_responsaveis_inseridos),
+                "beneficiario_identifiers": len(nis_beneficiarios_inseridos),
+            },
+        }
+
+        del chunk
+        del prepared
+        del df_responsavel
+        del df_beneficiario
+        del df_auxilio
+        chunk_report["memory_mb"]["after_cleanup"] = memory_snapshot()
+        chunks.append(chunk_report)
 
         # Imprime mensagens sem atrapalhar a barra de progresso.
         tqdm.write(
@@ -458,6 +521,11 @@ async def main(config: IngestionConfig) -> None:
                 total_source_rows / total_seconds if total_seconds > 0 else None
             ),
             "peak_memory_mb": peak_memory_mb(),
+            "memory_mb": {
+                "ingestion_start": ingestion_start_memory,
+                "after_setup": after_setup_memory,
+                "ingestion_end": memory_snapshot(),
+            },
         },
         "chunks": chunks,
     }
