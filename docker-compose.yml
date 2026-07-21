@@ -69,6 +69,7 @@ services:
       - --ServerApp.password=
     environment:
       HOME: /tmp/jupyter-home
+      PYTHONPATH: /app
     ports:
       - "127.0.0.1:${JUPYTER_HOST_PORT:-8889}:8889"
 

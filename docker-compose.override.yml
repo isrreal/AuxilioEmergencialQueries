@@ -16,3 +16,5 @@ services:
       - ./notebooks:/app/notebooks
       - ./artifacts:/app/artifacts:ro
       - ./app:/app/app:ro
+      - ./analysis:/app/analysis:ro
+      - ./results:/app/results
