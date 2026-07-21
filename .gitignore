@@ -1,5 +1,71 @@
+# Environment variables and local secrets
 .env
-__pycache__
-.ipynb_checkpoints
-docker-commands-guide.txt
+.env.*
+!.env.example
+
+# Project-local agent files
+.agents/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.hypothesis/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Coverage and test reports
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# Packaging and build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+
+# Logs and runtime files
+*.log
+logs/
+*.pid
+uploads/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Large local datasets
+dataset/
 *.csv
+*.csv.gz
+*.parquet
+
+# Local project notes
+docker-commands-guide.txt
