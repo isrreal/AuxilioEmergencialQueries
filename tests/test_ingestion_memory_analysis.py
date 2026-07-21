@@ -1,9 +1,16 @@
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
-from analysis.ingestion_memory import load_memory_experiment, validate_memory_chunk
+from analysis.ingestion_memory import (
+    aggregate_memory_trajectory,
+    load_memory_experiment,
+    measured_memory_chunks,
+    summarize_memory_runs,
+    validate_memory_chunk,
+)
 
 
 def make_memory_chunk(*, responsavel_identifiers: int = 10) -> dict:
@@ -90,3 +97,63 @@ def test_load_memory_experiment_derives_chunk_memory_metrics(tmp_path: Path) -> 
     assert chunks.loc[0, "active_chunk_rss_high_mb"] == 180.0
     assert chunks.loc[0, "rss_change_after_cleanup_mb"] == 10.0
     assert chunks.loc[0, "rss_drop_from_active_high_mb"] == 70.0
+
+
+def test_memory_analysis_excludes_warmups_and_summarizes_growth() -> None:
+    chunks = pd.DataFrame(
+        [
+            {
+                "source_rows": 200,
+                "kind": "warmup",
+                "run": 1,
+                "processed_rows": 100,
+                "current_rss_before_read_mb": 1.0,
+            },
+            {
+                "source_rows": 200,
+                "kind": "run",
+                "run": 1,
+                "processed_rows": 100,
+                "current_rss_before_read_mb": 100.0,
+                "current_rss_after_read_mb": 120.0,
+                "current_rss_after_transform_mb": 140.0,
+                "current_rss_after_write_mb": 140.0,
+                "current_rss_after_cleanup_mb": 110.0,
+                "active_chunk_rss_high_mb": 140.0,
+                "responsavel_identifiers": 10,
+                "beneficiario_identifiers": 20,
+                "dataframe_source_chunk_mb": 20.0,
+                "dataframe_responsavel_mb": 5.0,
+                "dataframe_beneficiario_mb": 10.0,
+                "dataframe_auxilio_mb": 8.0,
+            },
+            {
+                "source_rows": 200,
+                "kind": "run",
+                "run": 1,
+                "processed_rows": 200,
+                "current_rss_before_read_mb": 110.0,
+                "current_rss_after_read_mb": 130.0,
+                "current_rss_after_transform_mb": 150.0,
+                "current_rss_after_write_mb": 150.0,
+                "current_rss_after_cleanup_mb": 125.0,
+                "active_chunk_rss_high_mb": 150.0,
+                "responsavel_identifiers": 20,
+                "beneficiario_identifiers": 40,
+                "dataframe_source_chunk_mb": 20.0,
+                "dataframe_responsavel_mb": 5.0,
+                "dataframe_beneficiario_mb": 10.0,
+                "dataframe_auxilio_mb": 8.0,
+            },
+        ]
+    )
+
+    measured = measured_memory_chunks(chunks)
+    trajectory = aggregate_memory_trajectory(chunks)
+    summary = summarize_memory_runs(chunks)
+
+    assert len(measured) == 2
+    assert len(trajectory) == 2
+    assert summary.loc[0, "cleanup_rss_growth_mb"] == 15.0
+    assert summary.loc[0, "total_rss_growth_mb"] == 25.0
+    assert summary.loc[0, "cleanup_rss_deduplication_correlation"] == 1.0
