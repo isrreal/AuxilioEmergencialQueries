@@ -1,11 +1,89 @@
+import argparse
 import asyncio
-from typing import Set, Tuple
+from dataclasses import dataclass
+from math import ceil
+from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
 from app.core.database import engine
+
+DEFAULT_CSV_PATH = Path("dataset/auxilio_emergencial.csv")
+DEFAULT_CHUNK_SIZE = 100_000
+UNDEFINED_RESPONSAVEL_NIS = "-2"
+
+COLUMN_TYPES = {
+    "nis_responsavel": "str",
+    "cpf_responsavel": "str",
+    "responsavel": "str",
+    "nis_beneficiario": "str",
+    "cpf_beneficiario": "str",
+    "beneficiario": "str",
+    "uf": "str",
+    "municipio": "str",
+    "ano_mes": "str",
+    "enquadramento": "str",
+    "observacao": "str",
+}
+
+
+@dataclass(frozen=True)
+class IngestionConfig:
+    csv_path: Path
+    chunk_size: int
+    max_rows: int | None
+
+
+def positive_int(value: str) -> int:
+    """Converte um argumento de CLI em inteiro estritamente positivo."""
+    parsed_value = int(value)
+    if parsed_value <= 0:
+        raise argparse.ArgumentTypeError("o valor deve ser maior que zero")
+    return parsed_value
+
+
+def parse_args(argv: Sequence[str] | None = None) -> IngestionConfig:
+    """Lê e valida os parâmetros operacionais da ingestão."""
+    parser = argparse.ArgumentParser(
+        description="Importa o dataset de Auxílio Emergencial para o PostgreSQL."
+    )
+    parser.add_argument(
+        "--csv-path",
+        type=Path,
+        default=DEFAULT_CSV_PATH,
+        help=f"caminho do CSV (padrão: {DEFAULT_CSV_PATH})",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=positive_int,
+        default=DEFAULT_CHUNK_SIZE,
+        help=f"linhas processadas por chunk (padrão: {DEFAULT_CHUNK_SIZE})",
+    )
+
+    row_scope = parser.add_mutually_exclusive_group(required=True)
+    row_scope.add_argument(
+        "--max-rows",
+        type=positive_int,
+        help="limita a quantidade de linhas para testes e cargas parciais",
+    )
+    row_scope.add_argument(
+        "--all-rows",
+        action="store_true",
+        help="confirma explicitamente o processamento de todo o arquivo",
+    )
+
+    args = parser.parse_args(argv)
+    if not args.csv_path.is_file():
+        parser.error(f"arquivo CSV não encontrado: {args.csv_path}")
+
+    return IngestionConfig(
+        csv_path=args.csv_path,
+        chunk_size=args.chunk_size,
+        max_rows=None if args.all_rows else args.max_rows,
+    )
 
 
 async def copy_from_dataframe(table_name: str, df: pd.DataFrame) -> None:
@@ -48,7 +126,7 @@ async def copy_from_dataframe(table_name: str, df: pd.DataFrame) -> None:
         print(f"Inserção concluída com sucesso ({len(df)} linhas)")
 
 
-def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def prepare_dataframes(chunk: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Separa e limpa o DataFrame em 3 DataFrames prontos para o banco.
     Assume que 'dtype' foi usado no pd.read_csv para colunas de string/ID.
@@ -60,7 +138,9 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
         'responsavel'
     ]].copy()
     df_responsavel.rename(columns = {'responsavel': 'nome_responsavel'}, inplace = True)
-    df_responsavel = df_responsavel[df_responsavel['nis_responsavel'] != '-2']
+    df_responsavel = df_responsavel[
+        df_responsavel["nis_responsavel"] != UNDEFINED_RESPONSAVEL_NIS
+    ]
     df_responsavel = df_responsavel.drop_duplicates(subset = ['nis_responsavel'])
         
     
@@ -99,10 +179,17 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
 
     return df_responsavel, df_beneficiario, df_auxilio
 
-async def main():
+async def main(config: IngestionConfig) -> None:
+    max_rows_description = config.max_rows if config.max_rows is not None else "todas"
+    print(
+        "Configuração da ingestão: "
+        f"csv={config.csv_path}, chunk_size={config.chunk_size}, "
+        f"max_rows={max_rows_description}"
+    )
+
     print("\nInserindo responsável indefinido...")
     df_indefinido: pd.DataFrame = pd.DataFrame([{
-        'nis_responsavel': '-2',
+        'nis_responsavel': UNDEFINED_RESPONSAVEL_NIS,
         'cpf_responsavel': ' ',
         'nome_responsavel': 'responsavel indefinido'
     }])
@@ -110,43 +197,24 @@ async def main():
     await copy_from_dataframe("responsavel", df_indefinido)
 
     print("Lendo CSV...")
-    csv_path: str = "dataset/auxilio_emergencial.csv"
 
-    chunk_size = 100000
-    # total_rows = 257_170_290
-    total_rows_to_process = 20_000_000
-    
-    nis_responsaveis_inseridos: Set = set()
-    nis_beneficiarios_inseridos: Set = set()
+    nis_responsaveis_inseridos: set[str] = set()
+    nis_beneficiarios_inseridos: set[str] = set()
     
     total_responsavel = 1 
     total_beneficiario = 0
     total_auxilio = 0
     
-    n_chunks = total_rows_to_process // chunk_size + (1 if total_rows_to_process % chunk_size else 0)
-
-    column_types = {
-        'nis_responsavel': 'str',
-        'cpf_responsavel': 'str',
-        'responsavel': 'str',
-        'nis_beneficiario': 'str',
-        'cpf_beneficiario': 'str',
-        'beneficiario': 'str',
-        'uf': 'str',
-        'municipio': 'str',
-        'ano_mes': 'str',
-        'enquadramento': 'str',
-        'observacao': 'str'
-    }
+    n_chunks = ceil(config.max_rows / config.chunk_size) if config.max_rows else None
 
     csv_iterator = pd.read_csv(
-        csv_path, 
-        chunksize = chunk_size, 
-        nrows = total_rows_to_process,
-        dtype = column_types
+        config.csv_path,
+        chunksize=config.chunk_size,
+        nrows=config.max_rows,
+        dtype=COLUMN_TYPES,
     )
     # processando todo o dataset através de chunks (porções volumosas do conjunto de dados).
-    for i, chunk in enumerate(tqdm(csv_iterator, total = n_chunks, desc = "Processando chunks")):
+    for chunk in tqdm(csv_iterator, total=n_chunks, desc="Processando chunks"):
         
         df_responsavel, df_beneficiario, df_auxilio = prepare_dataframes(chunk)
         
@@ -186,4 +254,4 @@ async def main():
     print(f"\nImportação completa!\nTotais - Responsavel: {total_responsavel}, Beneficiario: {total_beneficiario}, Auxilio: {total_auxilio}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(parse_args()))
