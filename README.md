@@ -160,12 +160,18 @@ executa as alterações estruturais.
 **⚠️ IMPORTANTE**: A importação do dataset completo pode levar **várias horas** (estimativa: 2-26h dependendo do hardware).
 
 ```bash
-# Execute o script de importação dentro do container
-docker compose run --rm api python -m app.core.insert
+# Teste rápido com um chunk de 100 mil linhas
+docker compose run --rm api python -m app.core.insert \
+  --chunk-size 100000 \
+  --max-rows 100000
 
-# Ou execute localmente se preferir
-python -m app.core.insert
+# Carga completa explícita
+docker compose run --rm api python -m app.core.insert --all-rows
 ```
+
+O caminho padrão é `dataset/auxilio_emergencial.csv`. Use `--csv-path CAMINHO` para
+selecionar outro arquivo. A CLI exige `--max-rows` ou `--all-rows` para impedir o início
+acidental de uma carga completa.
 
 **Detalhes da Importação:**
 - **257.170.290 registros** processados em chunks de 100.000
@@ -304,9 +310,9 @@ CREATE TABLE auxilio (
 
 ### Container do PostgreSQL não inicia
 ```bash
-docker-compose down -v
-docker-compose up -d db
-docker-compose logs -f db
+docker compose down --volumes
+docker compose up -d db
+docker compose logs -f db
 ```
 
 ### Erro durante a importação (insert.py)
@@ -315,12 +321,13 @@ docker-compose logs -f db
 ls -lh dataset/auxilio_emergencial.csv
 
 # Verifique os logs do container
-docker-compose logs db
+docker compose logs db
 
 # Limpe o banco e reimporte
-docker-compose down -v
-docker-compose up -d db
-docker-compose run --rm api python insert.py
+docker compose down --volumes
+docker compose up -d db
+docker compose run --rm api alembic upgrade head
+docker compose run --rm api python -m app.core.insert --max-rows 100000
 ```
 
 ### Timeout nas consultas
@@ -348,9 +355,9 @@ docker-compose exec db psql -U seu_usuario -d emergencial_aid_db -c "VACUUM ANAL
 ```
 
 ### Erro de memória durante importação
-- Reduza o `chunk_size` em `insert.py` (de 100000 para 50000)
+- Reduza o chunk pela CLI, por exemplo: `--chunk-size 50000`
 - Aumente a memória disponível para o Docker
-- Considere importar parcialmente modificando `total_rows_to_process`
+- Use `--max-rows` para limitar explicitamente a carga
 
 ## 🔧 Configurações Avançadas
 
@@ -380,11 +387,12 @@ services:
 
 ### Importação Parcial (Teste)
 
-Para testar com menos dados, edite `insert.py`:
+Para testar com menos dados, informe o limite pela CLI:
 
-```python
-# Linha ~48
-total_rows_to_process = 1_000_000  # Ao invés de 257_170_290
+```bash
+docker compose run --rm api python -m app.core.insert \
+  --chunk-size 100000 \
+  --max-rows 1000000
 ```
 
 ## 📝 Licença
