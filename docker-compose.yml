@@ -52,5 +52,25 @@ services:
       api:
         condition: service_healthy
 
+  notebook:
+    image: csgbd-app:local
+    profiles:
+      - notebook
+    init: true
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    command:
+      - jupyter
+      - lab
+      - --notebook-dir=/app
+      - --ip=0.0.0.0
+      - --port=8889
+      - --no-browser
+      - --IdentityProvider.token=
+      - --ServerApp.password=
+    environment:
+      HOME: /tmp/jupyter-home
+    ports:
+      - "127.0.0.1:${JUPYTER_HOST_PORT:-8889}:8889"
+
 volumes:
   postgres_data:

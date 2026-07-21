@@ -10,3 +10,9 @@ services:
   app_runner:
     volumes:
       - ./dashboard.py:/app/dashboard.py:ro
+
+  notebook:
+    volumes:
+      - ./notebooks:/app/notebooks
+      - ./artifacts:/app/artifacts:ro
+      - ./app:/app/app:ro
