@@ -1,7 +1,9 @@
-from typing import ClassVar, Optional, List
+from typing import ClassVar, List, Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm.decl_api import DeclarativeMeta
+
 
 class Settings(BaseSettings):
     """

@@ -1,10 +1,13 @@
 import asyncio
-import pandas as pd
-from app.core.database import engine
-from app.core.configs import settings
 from typing import Set, Tuple
-from tqdm import tqdm
+
 import numpy as np
+import pandas as pd
+from tqdm import tqdm
+
+from app.core.configs import settings
+from app.core.database import engine
+
 
 async def create_tables() -> None:
     import app.models.__all_models  # noqa: F401

@@ -1,16 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import distinct, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, distinct
-from app.models.models import Beneficiario, Auxilio, Responsavel
-from app.schemas.schemas import BeneficiarioListResponse, ContagemResponse
-from app.core.deps import get_session
 
+from app.core.deps import get_session
+from app.models.models import Auxilio, Beneficiario, Responsavel
+from app.schemas.schemas import BeneficiarioListResponse, ContagemResponse
 from app.utils.utils import (
+    configurar_estrategia_busca,
+    create_streaming_response,
     stream_json_array,
     stream_ndjson,
-    create_streaming_response,
-    configurar_estrategia_busca
 )
 
 router: APIRouter = APIRouter()
@@ -129,7 +129,7 @@ async def beneficiarios_multiplas_parcelas(
         if not beneficiarios:
             raise HTTPException(
                 status_code = status.HTTP_404_NOT_FOUND,
-                detail = f"Nenhum beneficiário encontrado."
+                detail = "Nenhum beneficiário encontrado."
             )
         return beneficiarios
     
