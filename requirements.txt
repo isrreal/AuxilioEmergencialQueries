@@ -28,5 +28,6 @@ streamlit~=1.36.0
 plotly~=5.22.0
 matplotlib~=3.8.4 
 
-ruff~=0.6.1
+pre-commit~=4.6.0
+ruff~=0.15.22
 black~=24.4.2

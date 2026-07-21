@@ -1,8 +1,9 @@
-import streamlit as st
-import requests
-import time
-import pandas as pd
 import json
+import time
+
+import pandas as pd
+import requests
+import streamlit as st
 
 # ===================================================================
 # CONFIGURAÇÃO GERAL
@@ -39,15 +40,18 @@ def api_stream_consumption(endpoint: str, params: dict) -> tuple[float | None, d
             stream=True,
             timeout=600 # Timeout generoso para queries pesadas
         ) as resp:
-            if resp.status_code != 200: return None, resp.text
+            if resp.status_code != 200:
+                return None, resp.text
             
             # Itera linha a linha sem carregar o arquivo todo
             for line in resp.iter_lines():
                 if line:
                     total_linhas += 1
                     if len(amostra) < 3: # Guarda só 3 registros de exemplo
-                        try: amostra.append(json.loads(line))
-                        except: pass
+                        try:
+                            amostra.append(json.loads(line))
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            pass
             
         tempo = time.time() - start
         
@@ -82,7 +86,9 @@ def executar_benchmark_stream(
         t_a, data_a = api_stream_consumption(endpoint, params_a)
         
         if t_a is None:
-            st.error(f"Erro em {desc_a}: {data_a}"); my_bar.empty(); return None
+            st.error(f"Erro em {desc_a}: {data_a}")
+            my_bar.empty()
+            return None
 
         # --- CENÁRIO B: COM ÍNDICE (STREAM) ---
         my_bar.progress(50, text=f"🚀 {desc_b} (Usando Índices no Stream)...")
@@ -92,7 +98,9 @@ def executar_benchmark_stream(
         t_b, data_b = api_stream_consumption(endpoint, params_b)
         
         if t_b is None:
-            st.error(f"Erro em {desc_b}: {data_b}"); my_bar.empty(); return None
+            st.error(f"Erro em {desc_b}: {data_b}")
+            my_bar.empty()
+            return None
 
         my_bar.progress(100, text="Finalizado!")
         time.sleep(0.5)
@@ -112,7 +120,8 @@ def executar_benchmark_stream(
         }
 
     except Exception as e:
-        st.error(f"Erro fatal: {e}"); return None
+        st.error(f"Erro fatal: {e}")
+        return None
 
 # ===================================================================
 # VISUALIZAÇÃO
@@ -125,12 +134,15 @@ def exibir_dashboard(res: dict):
     
     # KPIs
     c1, c2, c3, c4 = st.columns(4)
-    with c1: st.metric(f"Tempo {l_a}", f"{t_a:.2f} s")
+    with c1:
+        st.metric(f"Tempo {l_a}", f"{t_a:.2f} s")
     with c2: 
         delta_color = "normal" if t_b < t_a else "inverse"
         st.metric(f"Tempo {l_b}", f"{t_b:.2f} s", delta=f"{res['ganho_pct']:.1f}%", delta_color=delta_color)
-    with c3: st.metric("Speedup (Vezes)", f"{res['speedup']:.2f}x")
-    with c4: st.metric("Linhas Baixadas", f"{res['qtd_linhas']:,}")
+    with c3:
+        st.metric("Speedup (Vezes)", f"{res['speedup']:.2f}x")
+    with c4:
+        st.metric("Linhas Baixadas", f"{res['qtd_linhas']:,}")
 
     # Gráfico
     st.subheader("⏱️ Comparativo de Tempo Total (Download + Processamento)")
@@ -213,7 +225,8 @@ for tab, cfg in zip(tabs, BENCHMARKS_CONFIG):
                     desc_a="Sem Índice",
                     desc_b="Com Índice"
                 )
-                if res: st.session_state[f"res_{cfg['id']}"] = res
+                if res:
+                    st.session_state[f"res_{cfg['id']}"] = res
 
         if f"res_{cfg['id']}" in st.session_state:
             exibir_dashboard(st.session_state[f"res_{cfg['id']}"])

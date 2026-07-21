@@ -1,7 +1,8 @@
 import json
+
 from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def serialize_row(row) -> dict:

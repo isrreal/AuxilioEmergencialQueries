@@ -1,13 +1,6 @@
-from sqlalchemy import (
-    Column, 
-    String, 
-    Integer, 
-    Float, 
-    Text, 
-    ForeignKey,
-    Index
-)
+from sqlalchemy import Column, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import relationship
+
 from app.core.configs import settings
 
 
