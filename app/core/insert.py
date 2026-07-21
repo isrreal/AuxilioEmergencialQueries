@@ -5,20 +5,8 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from app.core.configs import settings
 from app.core.database import engine
 
-
-async def create_tables() -> None:
-    import app.models.__all_models  # noqa: F401
-
-    print("Criando as tabelas do banco de dados...")
-
-    async with engine.begin() as db:
-        await db.run_sync(settings.DBBaseModel.metadata.drop_all)
-        await db.run_sync(settings.DBBaseModel.metadata.create_all)
-
-    print("Tabelas criadas com sucesso")
 
 async def copy_from_dataframe(table_name: str, df: pd.DataFrame) -> None:
     """
@@ -112,8 +100,6 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
     return df_responsavel, df_beneficiario, df_auxilio
 
 async def main():
-    await create_tables()
-
     print("\nInserindo responsável indefinido...")
     df_indefinido: pd.DataFrame = pd.DataFrame([{
         'nis_responsavel': '-2',
