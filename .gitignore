@@ -68,4 +68,4 @@ dataset/
 *.parquet
 
 # Local project notes
-docker-commands-guide.txt
+docker-commands-guide.md

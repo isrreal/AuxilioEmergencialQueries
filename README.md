@@ -77,9 +77,10 @@ O projeto é composto por três serviços containerizados:
 .
 ├── docker-compose.yml          # Orquestração dos serviços
 ├── Dockerfile                  # Imagem Python para API e Dashboard
+├── alembic.ini                 # Configuração das migrations
+├── alembic/                    # Histórico versionado do esquema
 ├── .env                        # Variáveis de ambiente (não versionado)
 ├── dashboard.py                # Interface Streamlit
-├── insert.py                   # Script de importação do CSV (257M linhas)
 ├── dataset/                    # Dados CSV (não versionado)
 │   └── auxilio_emergencial.csv
 ├── app/
@@ -93,6 +94,7 @@ O projeto é composto por três serviços containerizados:
 │   │   ├── deps.py            # Dependências (DB session)
 │   │   ├── config.py          # Configurações
 │   │   ├── database.py        # Engine e Session AsyncPG
+│   │   └── insert.py          # Pipeline de ingestão do CSV
 │   ├── models/
 │   │   ├── models.py          # Modelos SQLAlchemy
 │   │   └── __all_models.py    # Import de todos os models
@@ -139,16 +141,30 @@ docker-compose logs -f db
 # Aguarde até ver "database system is ready to accept connections"
 ```
 
+### Criar ou atualizar o esquema
+
+```bash
+docker compose run --rm api alembic upgrade head
+```
+
+O Alembic cria a extensão `pg_trgm` e as tabelas permanentes. Os índices secundários
+usados nos benchmarks não fazem parte do esquema-base: eles serão controlados pelos
+experimentos.
+
+Não execute `alembic stamp head` em um banco existente sem antes conferir se seu esquema
+corresponde exatamente à migration. O comando marca uma revisão como aplicada, mas não
+executa as alterações estruturais.
+
 ### Importar os Dados
 
 **⚠️ IMPORTANTE**: A importação do dataset completo pode levar **várias horas** (estimativa: 2-26h dependendo do hardware).
 
 ```bash
 # Execute o script de importação dentro do container
-docker-compose run --rm api python insert.py
+docker compose run --rm api python -m app.core.insert
 
 # Ou execute localmente se preferir
-python insert.py
+python -m app.core.insert
 ```
 
 **Detalhes da Importação:**
