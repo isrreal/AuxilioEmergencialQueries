@@ -14,6 +14,8 @@ os.environ.setdefault(
 from app.core.insert import (  # noqa: E402
     DEFAULT_REPORT_PATH,
     UNDEFINED_RESPONSAVEL_NIS,
+    current_memory_mb,
+    dataframe_memory_mb,
     parse_args,
     positive_int,
     prepare_dataframes,
@@ -75,3 +77,17 @@ def test_write_report_creates_parent_directory(tmp_path: Path) -> None:
     write_report({"schema_version": 1}, report_path)
 
     assert json.loads(report_path.read_text(encoding="utf-8")) == {"schema_version": 1}
+
+
+def test_current_memory_mb_reads_vmrss_from_proc_status(tmp_path: Path) -> None:
+    status_path = tmp_path / "status"
+    status_path.write_text("Name:\tpython\nVmRSS:\t2048 kB\n", encoding="utf-8")
+
+    assert current_memory_mb(status_path) == 2.0
+
+
+def test_dataframe_memory_mb_uses_deep_object_memory() -> None:
+    dataframe = pd.DataFrame({"value": ["a" * 1000]})
+    shallow_mb = float(dataframe.memory_usage(index=True, deep=False).sum()) / (1024**2)
+
+    assert dataframe_memory_mb(dataframe) > shallow_mb
