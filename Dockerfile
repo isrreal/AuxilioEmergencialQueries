@@ -30,4 +30,4 @@ RUN addgroup --system appuser && \
 
 USER appuser
 
-EXPOSE 8000 8501
+EXPOSE 8000 8501 8889

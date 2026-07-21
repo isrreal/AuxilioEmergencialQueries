@@ -187,6 +187,60 @@ O pipeline medido nesta etapa ainda não é idempotente: execute cada baseline s
 vazio. A deduplicação global em memória e as transações independentes por tabela são
 limitações deliberadamente preservadas no baseline para comparação com a futura refatoração.
 
+### Automatizar repetições do baseline
+
+O executor abaixo constrói a imagem, cria um projeto Compose isolado, recria seu banco antes
+de cada execução, aplica as migrations e valida cada relatório antes de salvá-lo:
+
+```bash
+python3 scripts/run_ingestion_baseline.py \
+  --sizes 100000 1000000 \
+  --chunk-size 100000 \
+  --warmups 1 \
+  --repetitions 3 \
+  --confirm-reset
+```
+
+`--confirm-reset` é obrigatório. O executor remove somente o volume pertencente ao projeto
+Compose `csgbd-ingestion-baseline`; o banco usado pelo Compose normal não é alterado. A porta
+PostgreSQL desse ambiente isolado é `55430` por padrão e pode ser alterada com
+`--postgres-host-port`.
+
+Os relatórios são organizados por quantidade exata de linhas:
+
+```text
+artifacts/ingestion/
+├── manifest.json
+├── rows-100000/
+│   ├── warmup-01.json
+│   ├── run-01.json
+│   ├── run-02.json
+│   └── run-03.json
+└── rows-1000000/
+    └── ...
+```
+
+Resultados existentes não são sobrescritos sem `--overwrite`. Arquivos parciais também não
+são promovidos a relatórios válidos quando uma execução falha. Use `--skip-build` somente
+quando a imagem `csgbd-app:local` já estiver atualizada.
+
+O `manifest.json` é atualizado após cada execução concluída. Em caso de falha ou interrupção,
+ele preserva o progresso e registra um dos estados `failed` ou `interrupted`; somente um
+protocolo integralmente concluído recebe o estado `completed`.
+
+### Executar o JupyterLab
+
+O JupyterLab é opcional e só inicia quando seu profile é solicitado:
+
+```bash
+docker compose --profile notebook up notebook
+```
+
+Acesse `http://127.0.0.1:8889`. Os notebooks são persistidos em `notebooks/` e os relatórios
+de `artifacts/` são montados somente para leitura. O servidor não exige token ou senha, por
+isso sua porta é publicada exclusivamente na interface local. Ajuste `LOCAL_UID` e
+`LOCAL_GID` no `.env` caso seu usuário do host não utilize os IDs `1000:1000`.
+
 **Detalhes da Importação:**
 - **257.170.290 registros** processados em chunks de 100.000
 - Utiliza **asyncpg COPY** para inserção em massa (bulk insert)
