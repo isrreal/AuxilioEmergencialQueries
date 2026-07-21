@@ -1,196 +1,215 @@
-# Auxílio Emergencial - Sistema de Benchmark de Consultas
+# Emergency Aid: data ingestion and performance experiments
 
-Sistema completo para análise de desempenho de consultas em banco de dados PostgreSQL utilizando índices otimizados. O projeto demonstra o impacto de diferentes estratégias de indexação em consultas reais de um dataset de Auxílio Emergencial com **257 milhões de registros**.
+Portfolio project for studying the ingestion, transformation, storage, and querying of a
+large public dataset in PostgreSQL. The goal is to build reproducible, technically
+defensible experiments and publish both their results and their limitations.
 
-## 🎯 Objetivo
+This repository does not assume that any tool, index, or chunk size is universally better.
+Every performance decision should be supported by a hypothesis, controlled variables,
+repeated runs, and structured results.
 
-Demonstrar na prática como índices de banco de dados (B-Tree, GIN, TRGM) podem melhorar significativamente - ou não - o desempenho de consultas SQL complexas, através de benchmarks comparativos entre cenários com e sem indexação em um dataset real de grande volume.
+## Current status
 
-## 🏗️ Arquitetura
+| Area | Status |
+|---|---|
+| Alembic-managed PostgreSQL schema | Implemented |
+| Chunked ingestion with Pandas and `asyncpg COPY` | Implemented |
+| Automated runner with an isolated database per run | Implemented |
+| Baselines for 100 thousand and 1 million rows | Published |
+| Per-stage chunk memory instrumentation | Implemented |
+| Baseline analysis notebook | Implemented |
+| Retained-memory growth experiment | Next step |
+| PostgreSQL staging-based deduplication | Planned |
+| Chunk-size comparison | Planned |
+| Pandas, Polars, and possible PySpark comparison | Planned |
+| Controlled index benchmarks with `EXPLAIN ANALYZE` | Planned |
 
-O projeto é composto por três serviços containerizados:
+The API and dashboard are functional interfaces for exploring queries, but they are not yet
+the final scientific SQL benchmark protocol. HTTP elapsed time combines database execution,
+serialization, and network transfer costs.
 
-- **PostgreSQL 15**: Banco de dados com extensão `pg_trgm` para buscas textuais
-- **FastAPI**: API REST para gerenciar índices e executar consultas
-- **Streamlit**: Dashboard interativo para visualização dos benchmarks
+## Published baseline results
 
+The first protocol used 100-thousand-row chunks, one warm-up run, and three measured runs.
+The values below are medians from the machine where the experiment was executed; they are
+not performance guarantees for other environments.
+
+| Source rows | Wall-clock time | Throughput | Peak RSS |
+|---:|---:|---:|---:|
+| 100,000 | 4.80 s | 20,832 rows/s | 214.25 MiB |
+| 1,000,000 | 49.65 s | 20,139 rows/s | 387.91 MiB |
+
+The aggregated data is available in
+[`results/ingestion-baseline-summary.csv`](results/ingestion-baseline-summary.csv), and the
+methodology is documented in
+[`notebooks/01_ingestion_baseline.ipynb`](notebooks/01_ingestion_baseline.ipynb).
+
+Growth in peak RSS alone does not prove memory retention. The pipeline now collects current
+RSS before and after each stage, together with the cardinality of its deduplication state.
+The repeated experiment using these new checkpoints has not been published yet.
+
+## Architecture
+
+```text
+Local CSV
+   │
+   ▼
+Pandas: chunked reading and normalization
+   │
+   ▼
+asyncpg: PostgreSQL binary COPY
+   │
+   ▼
+PostgreSQL 15
+   │
+   ├── FastAPI ── Streamlit
+   │
+   └── JSON reports ── analysis modules ── JupyterLab
 ```
-┌─────────────────┐
-│   Streamlit     │
-│   Dashboard     │
-│   (Port 8501)   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│    FastAPI      │
-│      API        │
-│   (Port 8000)   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   PostgreSQL    │
-│   Database      │
-│   (Port 5430)   │
-└─────────────────┘
+
+Docker Compose services:
+
+- `db`: PostgreSQL 15 with persistent storage;
+- `api`: FastAPI and the ingestion CLI;
+- `app_runner`: Streamlit dashboard;
+- `notebook`: optional JupyterLab service enabled through a profile.
+
+Main technologies: Python 3.11, Pandas, FastAPI, SQLAlchemy, asyncpg, PostgreSQL, Alembic,
+Docker Compose, Pytest, Ruff, and JupyterLab.
+
+## Data model
+
+The source CSV is normalized into three tables:
+
+```text
+responsavel
+    1
+    │
+    N
+beneficiario
+    1
+    │
+    N
+auxilio
 ```
 
-## 🚀 Tecnologias Utilizadas
+- `responsavel`: one row per responsible party NIS identifier;
+- `beneficiario`: one row per beneficiary NIS identifier;
+- `auxilio`: payment-installment history associated with each beneficiary.
 
-- **Backend**: FastAPI, SQLAlchemy (async), Pydantic
-- **Frontend**: Streamlit, Pandas, Requests
-- **Banco de Dados**: PostgreSQL 15 Alpine
-- **Containerização**: Docker, Docker Compose
-- **Processamento**: Asyncio, AsyncPG (bulk insert)
+The baseline schema contains primary and foreign keys. Experimental secondary indexes are
+not part of the initial migration: a future benchmark runner will create and remove them
+explicitly.
 
-## 📊 Cenários de Benchmark
+## Relevant project structure
 
-### 1. 💰 Gasto Total por UF
-- **Índices**: B-Tree em `beneficiario(uf, nis)` e `auxilio(nis, valor)`
-- **Operação**: `JOIN` + `SUM` com filtro por estado
-- **Caso de Uso**: Calcular investimento total por região
-
-### 2. 🏙️ Contagem por Município
-- **Índices**: GIN com `pg_trgm` em `municipio`
-- **Operação**: `COUNT DISTINCT` com `ILIKE '%termo%'`
-- **Caso de Uso**: Busca textual aproximada em nomes de cidades
-
-### 3. 🔠 Busca por Nome
-- **Índices**: B-Tree com `text_pattern_ops`
-- **Operação**: `SELECT` com `ILIKE 'termo%'`
-- **Caso de Uso**: Autocomplete e buscas por prefixo
-
-### 4. 🎁 Múltiplas Parcelas
-- **Índices**: Compostos em `auxilio(nis, parcela)` e `beneficiario(uf, nis)`
-- **Operação**: `JOIN` com filtro numérico
-- **Caso de Uso**: Identificar beneficiários com critérios específicos
-
-### 5. 👥 Beneficiários-Responsáveis
-- **Índices**: Múltiplos B-Tree para JOIN triplo
-- **Operação**: `JOIN` entre 3 tabelas com `DISTINCT`
-- **Caso de Uso**: Análise de relações familiares no programa
-
-## 📁 Estrutura do Projeto
-
-```
+```text
 .
-├── docker-compose.yml          # Orquestração dos serviços
-├── Dockerfile                  # Imagem Python para API e Dashboard
-├── alembic.ini                 # Configuração das migrations
-├── alembic/                    # Histórico versionado do esquema
-├── .env                        # Variáveis de ambiente (não versionado)
-├── dashboard.py                # Interface Streamlit
-├── dataset/                    # Dados CSV (não versionado)
-│   └── auxilio_emergencial.csv
+├── alembic/                       # schema migrations
+├── analysis/
+│   ├── ingestion_baseline.py      # baseline validation and aggregation
+│   └── ingestion_memory.py        # memory-checkpoint tabulation
 ├── app/
-│   ├── main.py                # Inicialização FastAPI
-│   ├── api/
-│   │   └── v1/
-│   │       ├── api.py         # Router principal
-│   │       └── endpoints/
-│   │           └── consultas_routes.py  # Rotas de benchmark
+│   ├── api/                       # FastAPI endpoints
 │   ├── core/
-│   │   ├── deps.py            # Dependências (DB session)
-│   │   ├── config.py          # Configurações
-│   │   ├── database.py        # Engine e Session AsyncPG
-│   │   └── insert.py          # Pipeline de ingestão do CSV
-│   ├── models/
-│   │   ├── models.py          # Modelos SQLAlchemy
-│   │   └── __all_models.py    # Import de todos os models
-│   └── schemas/
-│       └── schemas.py         # Schemas Pydantic
-└── README.md
+│   │   ├── configs.py             # environment-driven configuration
+│   │   ├── database.py            # asynchronous engine and sessions
+│   │   └── insert.py              # ingestion pipeline
+│   └── models/                    # SQLAlchemy models
+├── notebooks/
+│   └── 01_ingestion_baseline.ipynb
+├── results/                       # versioned aggregate results
+├── scripts/
+│   └── run_ingestion_baseline.py  # reproducible experiment runner
+├── tests/
+├── dashboard.py
+├── docker-compose.yml
+└── Dockerfile
 ```
 
-## ⚙️ Configuração e Execução
+Local datasets and raw reports under `artifacts/` are not versioned. Public results must be
+aggregated and must not expose CPF, NIS, or local filesystem paths.
 
-### Pré-requisitos
+## Prerequisites
 
-- Docker e Docker Compose instalados
-- Dataset CSV (`auxilio_emergencial.csv`) na pasta `./dataset/`
-- Arquivo `.env` configurado
-- **Mínimo 8GB RAM** e **50GB de espaço em disco** para o dataset completo
+- Docker with the Docker Compose plugin;
+- Python 3 on the host to run the experiment orchestrator;
+- a `dataset/auxilio_emergencial.csv` file;
+- enough memory and storage for the selected input size.
 
-### Arquivo `.env`
+The dataset is not distributed with this repository. The complete source contains hundreds
+of millions of rows; always begin with `--max-rows`.
 
-```env
-# PostgreSQL
-POSTGRES_USER=seu_usuario
-POSTGRES_PASSWORD=sua_senha
-DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/emergencial_aid_db
-
-```
-
-### Iniciar o Projeto
+## Configuration
 
 ```bash
-# Clone o repositório
-git clone https://github.com/seu-usuario/AuxilioEmergencialQueries.git
+git clone https://github.com/isrreal/AuxilioEmergencialQueries.git
 cd AuxilioEmergencialQueries
-
-# Configure o .env
 cp .env.example .env
-# Edite o .env com suas credenciais
-
-# Inicie apenas o banco de dados primeiro
-docker-compose up -d db
-
-# Aguarde o banco estar pronto
-docker-compose logs -f db
-# Aguarde até ver "database system is ready to accept connections"
 ```
 
-### Criar ou atualizar o esquema
+Edit `.env` and replace the example password. The available variables are documented in
+`.env.example`; Docker Compose constructs the application's internal database URL, so it
+does not need to be written manually.
+
+Start PostgreSQL and apply the migrations:
 
 ```bash
+docker compose up -d db
 docker compose run --rm api alembic upgrade head
 ```
 
-O Alembic cria a extensão `pg_trgm` e as tabelas permanentes. Os índices secundários
-usados nos benchmarks não fazem parte do esquema-base: eles serão controlados pelos
-experimentos.
+`alembic upgrade head` creates the `pg_trgm` extension and the three tables. Do not use
+`alembic stamp head` as a substitute: `stamp` only changes the recorded revision and does
+not execute structural changes.
 
-Não execute `alembic stamp head` em um banco existente sem antes conferir se seu esquema
-corresponde exatamente à migration. O comando marca uma revisão como aplicada, mas não
-executa as alterações estruturais.
+## Run a controlled ingestion
 
-### Importar os Dados
-
-**⚠️ IMPORTANTE**: A importação do dataset completo pode levar **várias horas** (estimativa: 2-26h dependendo do hardware).
+Initial 100-thousand-row test:
 
 ```bash
-# Teste rápido com um chunk de 100 mil linhas
 mkdir -p artifacts
 docker compose run --rm api python -m app.core.insert \
   --chunk-size 100000 \
   --max-rows 100000 \
-  > artifacts/ingestion-baseline-100k.json
-
-# Carga completa explícita
-docker compose run --rm api python -m app.core.insert \
-  --all-rows \
-  > artifacts/ingestion-baseline-full.json
+  > artifacts/ingestion-smoke.json
 ```
 
-No container, o caminho padrão é `/data/auxilio_emergencial.csv`. Use
-`--csv-path /data/OUTRO_ARQUIVO.csv` para selecionar outro arquivo montado. A CLI exige
-`--max-rows` ou `--all-rows` para impedir o início acidental de uma carga completa.
+Progress messages are written to `stderr`, while the JSON report is written to `stdout`.
+The `--report-path` option can also write the JSON directly to a file accessible inside the
+execution environment.
 
-As mensagens de progresso são enviadas para stderr, enquanto o relatório JSON é enviado
-para stdout. O redirecionamento acima preserva um relatório estruturado com tempos de
-leitura, transformação e escrita, throughput, pico de memória, contagens totais e métricas
-por chunk. O diretório `artifacts/` não é versionado porque os resultados dependem do
-hardware e das condições de cada execução.
+To use another file mounted under `dataset/`:
 
-O pipeline medido nesta etapa ainda não é idempotente: execute cada baseline sobre um banco
-vazio. A deduplicação global em memória e as transações independentes por tabela são
-limitações deliberadamente preservadas no baseline para comparação com a futura refatoração.
+```bash
+docker compose run --rm api python -m app.core.insert \
+  --csv-path /data/another_file.csv \
+  --chunk-size 100000 \
+  --max-rows 100000
+```
 
-### Automatizar repetições do baseline
+The CLI requires exactly one explicit scope option:
 
-O executor abaixo constrói a imagem, cria um projeto Compose isolado, recria seu banco antes
-de cada execução, aplica as migrations e valida cada relatório antes de salvá-lo:
+- `--max-rows N` for a partial load;
+- `--all-rows` to process the complete file.
+
+### Current ingestion limitations
+
+- the ingestion is not idempotent and must run against an empty database;
+- the deduplication sets grow with the accumulated number of distinct identifiers;
+- each target table is written in an independent transaction;
+- a failure may leave a partially committed load;
+- Pandas reading and transformations are synchronous despite the asynchronous driver;
+- the RSS checkpoints depend on Linux `procfs`;
+- the reported process memory covers Python, not PostgreSQL.
+
+These limitations are preserved in the baseline so future refactorings can be compared under
+the same protocol.
+
+## Run the automated protocol
+
+The runner uses an isolated Compose project, recreates only that project's database before
+each run, applies migrations, validates each report, and maintains an incremental manifest:
 
 ```bash
 python3 scripts/run_ingestion_baseline.py \
@@ -201,12 +220,9 @@ python3 scripts/run_ingestion_baseline.py \
   --confirm-reset
 ```
 
-`--confirm-reset` é obrigatório. O executor remove somente o volume pertencente ao projeto
-Compose `csgbd-ingestion-baseline`; o banco usado pelo Compose normal não é alterado. A porta
-PostgreSQL desse ambiente isolado é `55430` por padrão e pode ser alterada com
-`--postgres-host-port`.
-
-Os relatórios são organizados por quantidade exata de linhas:
+`--confirm-reset` is required because the isolated volume is removed repeatedly. The regular
+Compose database is not changed. Existing results require `--overwrite`; use `--skip-build`
+only when the `csgbd-app:local` image is already current.
 
 ```text
 artifacts/ingestion/
@@ -220,292 +236,130 @@ artifacts/ingestion/
     └── ...
 ```
 
-Resultados existentes não são sobrescritos sem `--overwrite`. Arquivos parciais também não
-são promovidos a relatórios válidos quando uma execução falha. Use `--skip-build` somente
-quando a imagem `csgbd-app:local` já estiver atualizada.
+If a run fails or is interrupted, the manifest preserves completed runs and records either
+`failed` or `interrupted`. Only a fully completed protocol receives `completed`.
 
-O `manifest.json` é atualizado após cada execução concluída. Em caso de falha ou interrupção,
-ele preserva o progresso e registra um dos estados `failed` ou `interrupted`; somente um
-protocolo integralmente concluído recebe o estado `completed`.
+## Memory instrumentation
 
-### Executar o JupyterLab
+Every chunk records the following checkpoints:
 
-O JupyterLab é opcional e só inicia quando seu profile é solicitado:
+```text
+before_read
+after_read
+after_transform
+after_write
+after_cleanup
+```
+
+Each checkpoint contains:
+
+- `current_rss_mb`, derived from `VmRSS`;
+- `peak_rss_mb`, derived from `VmHWM`.
+
+The report also includes the deep memory footprint of each DataFrame and the number of
+identifiers stored in the deduplication sets. The analysis module converts these structures
+into one tabular row per chunk:
+
+```python
+from pathlib import Path
+
+from analysis.ingestion_memory import load_memory_experiment
+
+chunks, metadata = load_memory_experiment(
+    Path("artifacts/ingestion/manifest.json")
+)
+```
+
+High RSS after `del` does not automatically imply a leak: the allocator may retain unused
+memory for reuse. The analysis must relate checkpoints, set cardinality, and repeated runs
+before inferring algorithmic retention.
+
+## JupyterLab
 
 ```bash
 docker compose --profile notebook up notebook
 ```
 
-Acesse `http://127.0.0.1:8889`. Os notebooks são persistidos em `notebooks/` e os relatórios
-de `artifacts/` são montados somente para leitura. O servidor não exige token ou senha, por
-isso sua porta é publicada exclusivamente na interface local. Ajuste `LOCAL_UID` e
-`LOCAL_GID` no `.env` caso seu usuário do host não utilize os IDs `1000:1000`.
+Open `http://127.0.0.1:8889`. The port is bound only to the local interface, and the service
+does not require a token. Adjust `LOCAL_UID` and `LOCAL_GID` in `.env` if notebook files are
+created with incorrect host permissions.
 
-Abra `notebooks/01_ingestion_baseline.ipynb` para analisar o protocolo gerado pelo executor.
-O notebook valida os relatórios, exclui aquecimentos, calcula mediana e dispersão, compara
-tempo por etapa, throughput e crescimento de memória, e atualiza o resumo público em
-`results/ingestion-baseline-summary.csv`. Os resultados agregados não incluem caminhos
-locais nem identificadores pessoais.
+Reports under `artifacts/` are mounted read-only; aggregate results can be written to
+`results/`.
 
-**Detalhes da Importação:**
-- **257.170.290 registros** processados em chunks de 100.000
-- Utiliza **asyncpg COPY** para inserção em massa (bulk insert)
-- Remove duplicatas automaticamente
-- Progress bar com `tqdm` para acompanhamento
+## Exploratory API and dashboard
 
-**Estrutura dos dados importados:**
-- **Responsável**: ~66 milhões de registros únicos
-- **Beneficiário**: ~67 milhões de registros únicos
-- **Auxílio**: ~257 milhões de registros (histórico de parcelas)
-
-### Iniciar os Serviços
+After applying migrations and ingesting data:
 
 ```bash
-# Após a importação, inicie todos os serviços
-docker-compose up -d
-
-# Acompanhe os logs
-docker-compose logs -f api app_runner
+docker compose up -d api app_runner
 ```
 
-### Acessar as Interfaces
+- API: `http://localhost:8000`;
+- OpenAPI: `http://localhost:8000/docs`;
+- dashboard: `http://localhost:8501`;
+- health check: `GET /health`.
 
-- **Dashboard Streamlit**: http://localhost:8501
-- **API FastAPI**: http://localhost:8000
-- **Documentação API**: http://localhost:8000/docs
-- **PostgreSQL**: localhost:5430
+Queries currently available under `/api/v1/consultas`:
 
-## 🔍 Como Usar
-
-### Dashboard Streamlit
-
-1. Acesse http://localhost:8501
-2. Escolha uma aba de benchmark
-3. Configure os parâmetros da consulta (UF, município, nome, etc.)
-4. Clique em "Comparar"
-5. Aguarde o processo completo (4 etapas):
-   - Apagar índices
-   - Medir consulta SEM índice
-   - Criar índices (pode demorar)
-   - Medir consulta COM índice
-6. Visualize os resultados: tempo, ganho percentual, gráfico e amostra de dados
-
-### API Endpoints
-
-**Gerenciamento de Índices:**
 ```http
-POST /api/v1/consultas/setup/gasto-uf/criar-indices
-POST /api/v1/consultas/setup/gasto-uf/apagar-indices
-POST /api/v1/consultas/setup/contagem-municipio/criar-indices
-POST /api/v1/consultas/setup/contagem-municipio/apagar-indices
-POST /api/v1/consultas/setup/por-nome/criar-indices
-POST /api/v1/consultas/setup/por-nome/apagar-indices
-POST /api/v1/consultas/setup/multiplas-parcelas/criar-indices
-POST /api/v1/consultas/setup/multiplas-parcelas/apagar-indices
-POST /api/v1/consultas/setup/beneficiarios-responsaveis/criar-indices
-POST /api/v1/consultas/setup/beneficiarios-responsaveis/apagar-indices
+GET /total-gasto-por-uf
+GET /beneficiarios-por-municipio
+GET /beneficiarios-responsaveis
+GET /beneficiarios-multiplas-parcelas
+GET /beneficiarios-por-nome
+GET /listar-beneficiarios
+GET /beneficiario/{nis}
 ```
 
-**Execução de Consultas:**
-```http
-GET /api/v1/consultas/executar/total-gasto-por-uf?uf=CE
-GET /api/v1/consultas/executar/quantidade-beneficiarios-municipio?uf=CE&municipio=FORTALEZA
-GET /api/v1/consultas/executar/beneficiarios-por-nome?nome=MARIA&limit=50
-GET /api/v1/consultas/executar/beneficiarios-multiplas-parcelas?uf=SP&min_parcela=1&limit=100
-GET /api/v1/consultas/executar/beneficiarios-responsaveis?uf=RJ&limit=50
-GET /api/v1/consultas/executar/buscar-beneficiario/{nis}
-GET /api/v1/consultas/executar/listar-beneficiarios?uf=CE&limit=1000
-```
+Some routes support JSON or NDJSON and can disable index, index-only, and bitmap scans for
+exploratory comparisons. This does not replace a controlled SQL benchmark with explicitly
+managed indexes, `EXPLAIN (ANALYZE, BUFFERS)`, and documented cache state.
 
-## 📈 Resultados Esperados
+## Code quality
 
-Os benchmarks em um dataset com **257 milhões de registros** demonstram:
-
-### Sem Dataset Completo (Testes)
-- **Buscas por PK**: ~0.001s (instantâneo)
-- **Buscas textuais sem índice**: 5-30s
-- **Buscas textuais com GIN/TRGM**: 0.2-1s
-- **Agregações sem índice**: 10-60s
-- **Agregações com índice**: 1-5s
-
-### Com Dataset Completo (257M registros)
-- **Buscas por PK**: ~0.001-0.005s (instantâneo)
-- **Buscas textuais sem índice**: 60-600s (1-10 minutos) ou **TIMEOUT**
-- **Buscas textuais com GIN/TRGM**: 2-15s
-- **Agregações sem índice**: 120-900s (2-15 minutos) ou **TIMEOUT**
-- **Agregações com índice**: 5-30s
-- **JOINs complexos sem índice**: **TIMEOUT** (>10 minutos)
-- **JOINs complexos com índice**: 10-60s
-
-**Ganhos típicos**: **90-99% de redução** no tempo de resposta com índices otimizados.
-
-### Tempo de Criação de Índices
-
-Em um dataset com 257M de registros:
-- **B-Tree simples**: 2-5 minutos
-- **B-Tree composto**: 5-10 minutos
-- **GIN com TRGM**: 15-30 minutos
-- **Múltiplos índices**: 30-60 minutos
-
-## 🗄️ Modelo de Dados
-
-```sql
--- Tabela: responsavel
-CREATE TABLE responsavel (
-    nis_responsavel VARCHAR PRIMARY KEY,
-    cpf_responsavel VARCHAR,
-    nome_responsavel VARCHAR
-);
-
--- Tabela: beneficiario
-CREATE TABLE beneficiario (
-    nis_beneficiario VARCHAR PRIMARY KEY,
-    cpf_beneficiario VARCHAR,
-    nome_beneficiario VARCHAR,
-    uf VARCHAR(2),
-    codigo_ibge_municipio INTEGER,
-    municipio VARCHAR,
-    nis_responsavel VARCHAR REFERENCES responsavel(nis_responsavel)
-);
-
--- Tabela: auxilio
-CREATE TABLE auxilio (
-    id SERIAL PRIMARY KEY,
-    ano_mes VARCHAR,
-    enquadramento VARCHAR,
-    parcela INTEGER,
-    observacao TEXT,
-    valor NUMERIC(10,2),
-    nis_beneficiario VARCHAR REFERENCES beneficiario(nis_beneficiario)
-);
-```
-
-## 🐛 Troubleshooting
-
-### Container do PostgreSQL não inicia
-```bash
-docker compose down --volumes
-docker compose up -d db
-docker compose logs -f db
-```
-
-### Erro durante a importação (insert.py)
-```bash
-# Verifique se o CSV está no local correto
-ls -lh dataset/auxilio_emergencial.csv
-
-# Verifique os logs do container
-docker compose logs db
-
-# Limpe o banco e reimporte
-docker compose down --volumes
-docker compose up -d db
-docker compose run --rm api alembic upgrade head
-docker compose run --rm api python -m app.core.insert --max-rows 100000
-```
-
-### Timeout nas consultas
-- Aumente o `timeout` em `dashboard.py` (linha com `requests.get(..., timeout=600)`)
-- Verifique se os índices foram criados: acesse http://localhost:8000/docs
-- Monitore recursos do container: `docker stats`
-- Para o dataset completo, consultas sem índice podem **nunca terminar**
-
-### Erro de conexão com API
-```bash
-# Verifique se os containers estão rodando
-docker-compose ps
-
-# Reinicie o serviço
-docker-compose restart api
-
-# Verifique logs
-docker-compose logs api
-```
-
-### Banco de dados lento após importação
-```bash
-# Execute VACUUM e ANALYZE
-docker-compose exec db psql -U seu_usuario -d emergencial_aid_db -c "VACUUM ANALYZE;"
-```
-
-### Erro de memória durante importação
-- Reduza o chunk pela CLI, por exemplo: `--chunk-size 50000`
-- Aumente a memória disponível para o Docker
-- Use `--max-rows` para limitar explicitamente a carga
-
-## 🔧 Configurações Avançadas
-
-### Otimizar PostgreSQL para Grandes Volumes
-
-Edite o `docker-compose.yml` e adicione:
-
-```yaml
-services:
-  db:
-    environment:
-      # ... outras configs
-    command: >
-      postgres
-      -c shared_buffers=2GB
-      -c effective_cache_size=6GB
-      -c maintenance_work_mem=512MB
-      -c checkpoint_completion_target=0.9
-      -c wal_buffers=16MB
-      -c default_statistics_target=100
-      -c random_page_cost=1.1
-      -c effective_io_concurrency=200
-      -c work_mem=10MB
-      -c min_wal_size=1GB
-      -c max_wal_size=4GB
-```
-
-### Importação Parcial (Teste)
-
-Para testar com menos dados, informe o limite pela CLI:
+Rebuild the image before testing when new files have been added:
 
 ```bash
-docker compose run --rm api python -m app.core.insert \
-  --chunk-size 100000 \
-  --max-rows 1000000
+docker compose build api
+docker compose run --rm --no-deps api python -m pytest -q
 ```
 
-## 📝 Licença
+Run the linter:
 
-Este projeto é disponibilizado para fins educacionais e de demonstração.
+```bash
+docker compose run --rm --no-deps api python -m ruff check .
+```
 
-## 👥 Contribuindo
+Install local hooks with:
 
-Contribuições são bem-vindas! Por favor:
+```bash
+pre-commit install
+```
 
-1. Fork o projeto
-2. Crie uma branch para sua feature (`git checkout -b feature/NovaFeature`)
-3. Commit suas mudanças (`git commit -m 'Adiciona NovaFeature'`)
-4. Push para a branch (`git push origin feature/NovaFeature`)
-5. Abra um Pull Request
+## Planned experiments
 
-### Ideias para Contribuição
+1. Measure post-cleanup RSS and deduplication-set cardinality at multiple scales.
+2. Replace global Python deduplication with PostgreSQL staging and consolidation.
+3. Compare chunk sizes under an explicit memory constraint.
+4. Compare `COPY` with batched `INSERT`, isolating the database write stage.
+5. Compare Pandas and Polars with equivalent transformations and outputs.
+6. Build index benchmarks that report plans, buffers, creation cost, and storage overhead.
 
-- Adicionar novos cenários de benchmark
-- Implementar cache de resultados
-- Criar visualizações mais avançadas
-- Adicionar testes automatizados
-- Otimizar queries existentes
-- Documentar mais patterns de indexação
+A synchronous Psycopg 3 ingestion implementation will also be evaluated. The goal is not to
+assume that synchronous code is faster, but to determine whether it reduces complexity
+without a material regression. The API may remain asynchronous because its concurrent
+request workload differs from a sequential ingestion CLI.
 
-## 📚 Recursos Úteis
+## Privacy and reproducibility
 
-- [Documentação PostgreSQL - Índices](https://www.postgresql.org/docs/current/indexes.html)
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [Streamlit Documentation](https://docs.streamlit.io/)
-- [SQLAlchemy Async](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html)
-- [pg_trgm Extension](https://www.postgresql.org/docs/current/pgtrgm.html)
+- do not commit the raw dataset;
+- do not publish CPF, NIS, or identifiable samples;
+- do not publish credentials or `.env` files;
+- keep raw reports under `artifacts/`;
+- publish only reproducible aggregates under `results/`;
+- record hardware, parameters, and repetition counts when publishing results.
 
-## 📞 Contato
+## Contact
 
-Para dúvidas ou sugestões, abra uma issue no repositório.
-
----
-
-**Desenvolvido com ⚙️ para demonstrar o poder da indexação em bancos de dados com grandes volumes**
-
-*Dataset: 257.170.290 registros | 3 tabelas | 5 cenários de benchmark*
+Author: [isrreal](https://github.com/isrreal)
