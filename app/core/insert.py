@@ -1,8 +1,14 @@
 import argparse
 import asyncio
+import json
+import platform
+import resource
+import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from math import ceil
 from pathlib import Path
+from time import perf_counter
 from typing import Sequence
 
 import numpy as np
@@ -11,8 +17,9 @@ from tqdm import tqdm
 
 from app.core.database import engine
 
-DEFAULT_CSV_PATH = Path("dataset/auxilio_emergencial.csv")
+DEFAULT_CSV_PATH = Path("/data/auxilio_emergencial.csv")
 DEFAULT_CHUNK_SIZE = 100_000
+DEFAULT_REPORT_PATH = Path("-")
 UNDEFINED_RESPONSAVEL_NIS = "-2"
 
 COLUMN_TYPES = {
@@ -35,6 +42,25 @@ class IngestionConfig:
     csv_path: Path
     chunk_size: int
     max_rows: int | None
+    report_path: Path
+
+
+@dataclass(frozen=True)
+class TransformationCounts:
+    responsavel_candidates: int
+    responsavel_discarded: int
+    beneficiario_candidates: int
+    beneficiario_discarded: int
+    auxilio_candidates: int
+    auxilio_discarded: int
+
+
+@dataclass(frozen=True)
+class PreparedChunk:
+    responsaveis: pd.DataFrame
+    beneficiarios: pd.DataFrame
+    auxilios: pd.DataFrame
+    counts: TransformationCounts
 
 
 def positive_int(value: str) -> int:
@@ -62,6 +88,12 @@ def parse_args(argv: Sequence[str] | None = None) -> IngestionConfig:
         default=DEFAULT_CHUNK_SIZE,
         help=f"linhas processadas por chunk (padrão: {DEFAULT_CHUNK_SIZE})",
     )
+    parser.add_argument(
+        "--report-path",
+        type=Path,
+        default=DEFAULT_REPORT_PATH,
+        help="arquivo JSON de saída; use '-' para escrever em stdout (padrão: '-')",
+    )
 
     row_scope = parser.add_mutually_exclusive_group(required=True)
     row_scope.add_argument(
@@ -83,6 +115,7 @@ def parse_args(argv: Sequence[str] | None = None) -> IngestionConfig:
         csv_path=args.csv_path,
         chunk_size=args.chunk_size,
         max_rows=None if args.all_rows else args.max_rows,
+        report_path=args.report_path,
     )
 
 
@@ -90,7 +123,7 @@ async def copy_from_dataframe(table_name: str, df: pd.DataFrame) -> None:
     """
     Realiza inserção em massa (bulk insert) de um DataFrame em uma tabela PostgreSQL via asyncpg COPY.
     """
-    print(f"Inserindo dados na tabela '{table_name}' via asyncpg COPY...")
+    print(f"Inserindo dados na tabela '{table_name}' via asyncpg COPY...", file=sys.stderr)
 
     async with engine.begin() as db:
         # Obtém a conexão bruta do PostgreSQL
@@ -123,15 +156,17 @@ async def copy_from_dataframe(table_name: str, df: pd.DataFrame) -> None:
             columns = columns
         )
 
-        print(f"Inserção concluída com sucesso ({len(df)} linhas)")
+        print(f"Inserção concluída com sucesso ({len(df)} linhas)", file=sys.stderr)
 
 
-def prepare_dataframes(chunk: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def prepare_dataframes(chunk: pd.DataFrame) -> PreparedChunk:
     """
     Separa e limpa o DataFrame em 3 DataFrames prontos para o banco.
     Assume que 'dtype' foi usado no pd.read_csv para colunas de string/ID.
     """
     
+    source_rows = len(chunk)
+
     df_responsavel = chunk[[
         'nis_responsavel',
         'cpf_responsavel',
@@ -177,26 +212,59 @@ def prepare_dataframes(chunk: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame,
     df_beneficiario = df_beneficiario.replace({pd.NA: None, np.nan: None})
     df_auxilio = df_auxilio.replace({pd.NA: None, np.nan: None})
 
-    return df_responsavel, df_beneficiario, df_auxilio
+    return PreparedChunk(
+        responsaveis=df_responsavel,
+        beneficiarios=df_beneficiario,
+        auxilios=df_auxilio,
+        counts=TransformationCounts(
+            responsavel_candidates=len(df_responsavel),
+            responsavel_discarded=source_rows - len(df_responsavel),
+            beneficiario_candidates=len(df_beneficiario),
+            beneficiario_discarded=source_rows - len(df_beneficiario),
+            auxilio_candidates=len(df_auxilio),
+            auxilio_discarded=source_rows - len(df_auxilio),
+        ),
+    )
+
+
+def peak_memory_mb() -> float:
+    """Retorna o pico de RSS do processo em MiB em sistemas Linux."""
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+
+
+def write_report(report: dict, destination: Path) -> None:
+    """Serializa o relatório em stdout ou em um arquivo JSON."""
+    serialized = json.dumps(report, ensure_ascii=False, indent=2)
+    if destination == Path("-"):
+        print(serialized)
+        return
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(f"{serialized}\n", encoding="utf-8")
 
 async def main(config: IngestionConfig) -> None:
+    started_at = datetime.now(UTC)
+    total_started = perf_counter()
     max_rows_description = config.max_rows if config.max_rows is not None else "todas"
     print(
         "Configuração da ingestão: "
         f"csv={config.csv_path}, chunk_size={config.chunk_size}, "
-        f"max_rows={max_rows_description}"
+        f"max_rows={max_rows_description}",
+        file=sys.stderr,
     )
 
-    print("\nInserindo responsável indefinido...")
+    print("\nInserindo responsável indefinido...", file=sys.stderr)
     df_indefinido: pd.DataFrame = pd.DataFrame([{
         'nis_responsavel': UNDEFINED_RESPONSAVEL_NIS,
         'cpf_responsavel': ' ',
         'nome_responsavel': 'responsavel indefinido'
     }])
 
+    setup_write_started = perf_counter()
     await copy_from_dataframe("responsavel", df_indefinido)
+    setup_write_seconds = perf_counter() - setup_write_started
 
-    print("Lendo CSV...")
+    print("Lendo CSV...", file=sys.stderr)
 
     nis_responsaveis_inseridos: set[str] = set()
     nis_beneficiarios_inseridos: set[str] = set()
@@ -204,6 +272,18 @@ async def main(config: IngestionConfig) -> None:
     total_responsavel = 1 
     total_beneficiario = 0
     total_auxilio = 0
+    total_source_rows = 0
+    total_read_seconds = 0.0
+    total_transform_seconds = 0.0
+    total_write_seconds = 0.0
+    total_discarded = {
+        "responsavel": 0,
+        "beneficiario": 0,
+        "auxilio": 0,
+        "responsavel_cross_chunk_duplicate": 0,
+        "beneficiario_cross_chunk_duplicate": 0,
+    }
+    chunks: list[dict] = []
     
     n_chunks = ceil(config.max_rows / config.chunk_size) if config.max_rows else None
 
@@ -213,10 +293,25 @@ async def main(config: IngestionConfig) -> None:
         nrows=config.max_rows,
         dtype=COLUMN_TYPES,
     )
-    # processando todo o dataset através de chunks (porções volumosas do conjunto de dados).
-    for chunk in tqdm(csv_iterator, total=n_chunks, desc="Processando chunks"):
-        
-        df_responsavel, df_beneficiario, df_auxilio = prepare_dataframes(chunk)
+    progress = tqdm(total=n_chunks, desc="Processando chunks", file=sys.stderr)
+    chunk_index = 0
+    while True:
+        read_started = perf_counter()
+        try:
+            chunk = next(csv_iterator)
+        except StopIteration:
+            break
+        read_seconds = perf_counter() - read_started
+        chunk_index += 1
+        total_source_rows += len(chunk)
+
+        transform_started = perf_counter()
+        prepared = prepare_dataframes(chunk)
+        df_responsavel = prepared.responsaveis
+        df_beneficiario = prepared.beneficiarios
+        df_auxilio = prepared.auxilios
+        responsavel_before_global_dedup = len(df_responsavel)
+        beneficiario_before_global_dedup = len(df_beneficiario)
         
         # mantém somente os responsáveis cujo valor de NIS não foram inseridos.
         df_responsavel = df_responsavel[
@@ -232,7 +327,16 @@ async def main(config: IngestionConfig) -> None:
             ~df_beneficiario['nis_beneficiario'].isin(nis_beneficiarios_inseridos)
         ]
         nis_beneficiarios_inseridos.update(df_beneficiario['nis_beneficiario'])
-        
+
+        responsavel_cross_chunk_duplicates = (
+            responsavel_before_global_dedup - len(df_responsavel)
+        )
+        beneficiario_cross_chunk_duplicates = (
+            beneficiario_before_global_dedup - len(df_beneficiario)
+        )
+        transform_seconds = perf_counter() - transform_started
+
+        write_started = perf_counter()
         if len(df_responsavel) > 0:
             await copy_from_dataframe("responsavel", df_responsavel)
             total_responsavel += len(df_responsavel)
@@ -244,14 +348,125 @@ async def main(config: IngestionConfig) -> None:
         if len(df_auxilio) > 0:
             await copy_from_dataframe("auxilio", df_auxilio)
             total_auxilio += len(df_auxilio)
+        write_seconds = perf_counter() - write_started
+
+        total_read_seconds += read_seconds
+        total_transform_seconds += transform_seconds
+        total_write_seconds += write_seconds
+        total_discarded["responsavel"] += prepared.counts.responsavel_discarded
+        total_discarded["beneficiario"] += prepared.counts.beneficiario_discarded
+        total_discarded["auxilio"] += prepared.counts.auxilio_discarded
+        total_discarded["responsavel_cross_chunk_duplicate"] += (
+            responsavel_cross_chunk_duplicates
+        )
+        total_discarded["beneficiario_cross_chunk_duplicate"] += (
+            beneficiario_cross_chunk_duplicates
+        )
+
+        chunk_elapsed = read_seconds + transform_seconds + write_seconds
+        chunks.append(
+            {
+                "index": chunk_index,
+                "source_rows": len(chunk),
+                "candidates_after_chunk_cleaning": {
+                    "responsavel": prepared.counts.responsavel_candidates,
+                    "beneficiario": prepared.counts.beneficiario_candidates,
+                    "auxilio": prepared.counts.auxilio_candidates,
+                },
+                "inserted": {
+                    "responsavel": len(df_responsavel),
+                    "beneficiario": len(df_beneficiario),
+                    "auxilio": len(df_auxilio),
+                },
+                "discarded": {
+                    "responsavel": prepared.counts.responsavel_discarded,
+                    "beneficiario": prepared.counts.beneficiario_discarded,
+                    "auxilio": prepared.counts.auxilio_discarded,
+                    "responsavel_cross_chunk_duplicate": responsavel_cross_chunk_duplicates,
+                    "beneficiario_cross_chunk_duplicate": beneficiario_cross_chunk_duplicates,
+                },
+                "timing_seconds": {
+                    "read": read_seconds,
+                    "transform": transform_seconds,
+                    "write": write_seconds,
+                    "total": chunk_elapsed,
+                },
+                "source_rows_per_second": (
+                    len(chunk) / chunk_elapsed if chunk_elapsed > 0 else None
+                ),
+                "peak_memory_mb": peak_memory_mb(),
+            }
+        )
 
         # Imprime mensagens sem atrapalhar a barra de progresso.
         tqdm.write(
             f"Acumulado - Responsavel: {total_responsavel}, "
-            f"Beneficiario: {total_beneficiario}, Auxilio: {total_auxilio}"
+            f"Beneficiario: {total_beneficiario}, Auxilio: {total_auxilio}",
+            file=sys.stderr,
         )
-    
-    print(f"\nImportação completa!\nTotais - Responsavel: {total_responsavel}, Beneficiario: {total_beneficiario}, Auxilio: {total_auxilio}")
+        progress.update(1)
+
+    progress.close()
+    total_seconds = perf_counter() - total_started
+    report = {
+        "schema_version": 1,
+        "status": "completed",
+        "started_at": started_at.isoformat(),
+        "finished_at": datetime.now(UTC).isoformat(),
+        "source": {
+            "path": str(config.csv_path.resolve()),
+            "size_bytes": config.csv_path.stat().st_size,
+        },
+        "configuration": {
+            "chunk_size": config.chunk_size,
+            "max_rows": config.max_rows,
+        },
+        "known_limitations": [
+            "deduplication sets grow with every distinct identifier",
+            "each table write uses an independent transaction",
+            "the ingestion is not idempotent",
+        ],
+        "environment": {
+            "python_version": platform.python_version(),
+            "pandas_version": pd.__version__,
+            "platform": platform.platform(),
+        },
+        "totals": {
+            "chunks": chunk_index,
+            "source_rows": total_source_rows,
+            "inserted": {
+                "responsavel": total_responsavel,
+                "beneficiario": total_beneficiario,
+                "auxilio": total_auxilio,
+            },
+            "synthetic_rows_inserted": {"responsavel": 1},
+            "discarded": total_discarded,
+            "timing_seconds": {
+                "setup_write": setup_write_seconds,
+                "read": total_read_seconds,
+                "transform": total_transform_seconds,
+                "write": total_write_seconds,
+                "measured_stages": (
+                    setup_write_seconds
+                    + total_read_seconds
+                    + total_transform_seconds
+                    + total_write_seconds
+                ),
+                "wall_clock": total_seconds,
+            },
+            "source_rows_per_second": (
+                total_source_rows / total_seconds if total_seconds > 0 else None
+            ),
+            "peak_memory_mb": peak_memory_mb(),
+        },
+        "chunks": chunks,
+    }
+    write_report(report, config.report_path)
+    print(
+        f"\nImportação completa em {total_seconds:.2f}s "
+        f"({report['totals']['source_rows_per_second']:.2f} linhas/s).",
+        file=sys.stderr,
+    )
 
 if __name__ == "__main__":
     asyncio.run(main(parse_args()))
