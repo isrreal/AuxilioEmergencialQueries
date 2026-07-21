@@ -67,6 +67,7 @@ dataset/
 *.csv
 *.csv.gz
 *.parquet
+!results/*.csv
 
 # Local project notes
 docker-commands-guide.md

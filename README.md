@@ -241,6 +241,12 @@ de `artifacts/` são montados somente para leitura. O servidor não exige token 
 isso sua porta é publicada exclusivamente na interface local. Ajuste `LOCAL_UID` e
 `LOCAL_GID` no `.env` caso seu usuário do host não utilize os IDs `1000:1000`.
 
+Abra `notebooks/01_ingestion_baseline.ipynb` para analisar o protocolo gerado pelo executor.
+O notebook valida os relatórios, exclui aquecimentos, calcula mediana e dispersão, compara
+tempo por etapa, throughput e crescimento de memória, e atualiza o resumo público em
+`results/ingestion-baseline-summary.csv`. Os resultados agregados não incluem caminhos
+locais nem identificadores pessoais.
+
 **Detalhes da Importação:**
 - **257.170.290 registros** processados em chunks de 100.000
 - Utiliza **asyncpg COPY** para inserção em massa (bulk insert)
