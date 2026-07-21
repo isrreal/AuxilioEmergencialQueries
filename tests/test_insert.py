@@ -16,6 +16,7 @@ from app.core.insert import (  # noqa: E402
     UNDEFINED_RESPONSAVEL_NIS,
     current_memory_mb,
     dataframe_memory_mb,
+    memory_snapshot,
     parse_args,
     positive_int,
     prepare_dataframes,
@@ -91,3 +92,13 @@ def test_dataframe_memory_mb_uses_deep_object_memory() -> None:
     shallow_mb = float(dataframe.memory_usage(index=True, deep=False).sum()) / (1024**2)
 
     assert dataframe_memory_mb(dataframe) > shallow_mb
+
+
+def test_memory_snapshot_reads_current_and_peak_from_proc_status(tmp_path: Path) -> None:
+    status_path = tmp_path / "status"
+    status_path.write_text("VmHWM:\t4096 kB\nVmRSS:\t2048 kB\n", encoding="utf-8")
+
+    assert memory_snapshot(status_path) == {
+        "current_rss_mb": 2.0,
+        "peak_rss_mb": 4.0,
+    }

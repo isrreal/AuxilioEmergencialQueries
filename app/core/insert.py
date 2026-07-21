@@ -243,12 +243,21 @@ def current_memory_mb(status_path: Path = Path("/proc/self/status")) -> float:
     raise RuntimeError(f"VmRSS não encontrado em {status_path}")
 
 
-def memory_snapshot() -> dict[str, float]:
-    """Captura o RSS atual e o maior RSS observado desde o início do processo."""
-    return {
-        "current_rss_mb": current_memory_mb(),
-        "peak_rss_mb": peak_memory_mb(),
-    }
+def memory_snapshot(status_path: Path = Path("/proc/self/status")) -> dict[str, float]:
+    """Captura RSS atual e pico de RSS usando a mesma fonte do procfs."""
+    values: dict[str, float] = {}
+    proc_fields = {"VmRSS:": "current_rss_mb", "VmHWM:": "peak_rss_mb"}
+    with status_path.open(encoding="utf-8") as status_file:
+        for line in status_file:
+            fields = line.split()
+            if fields and fields[0] in proc_fields:
+                values[proc_fields[fields[0]]] = int(fields[1]) / 1024
+
+    missing = set(proc_fields.values()) - values.keys()
+    if missing:
+        formatted = ", ".join(sorted(missing))
+        raise RuntimeError(f"campos de memória ausentes em {status_path}: {formatted}")
+    return values
 
 
 def dataframe_memory_mb(dataframe: pd.DataFrame) -> float:
