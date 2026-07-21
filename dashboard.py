@@ -1,4 +1,5 @@
 import json
+import os
 import time
 
 import pandas as pd
@@ -8,7 +9,7 @@ import streamlit as st
 # ===================================================================
 # CONFIGURAÇÃO GERAL
 # ===================================================================
-API_BASE = "http://api:8000/api/v1" 
+API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000/api/v1")
 st.set_page_config(page_title="Benchmark Full Stream", layout="wide", page_icon="⚡")
 
 st.markdown("""
