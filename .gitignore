@@ -33,6 +33,7 @@ htmlcov/
 # Packaging and build artifacts
 build/
 dist/
+artifacts/
 *.egg-info/
 .eggs/
 

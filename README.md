@@ -161,17 +161,31 @@ executa as alterações estruturais.
 
 ```bash
 # Teste rápido com um chunk de 100 mil linhas
+mkdir -p artifacts
 docker compose run --rm api python -m app.core.insert \
   --chunk-size 100000 \
-  --max-rows 100000
+  --max-rows 100000 \
+  > artifacts/ingestion-baseline-100k.json
 
 # Carga completa explícita
-docker compose run --rm api python -m app.core.insert --all-rows
+docker compose run --rm api python -m app.core.insert \
+  --all-rows \
+  > artifacts/ingestion-baseline-full.json
 ```
 
-O caminho padrão é `dataset/auxilio_emergencial.csv`. Use `--csv-path CAMINHO` para
-selecionar outro arquivo. A CLI exige `--max-rows` ou `--all-rows` para impedir o início
-acidental de uma carga completa.
+No container, o caminho padrão é `/data/auxilio_emergencial.csv`. Use
+`--csv-path /data/OUTRO_ARQUIVO.csv` para selecionar outro arquivo montado. A CLI exige
+`--max-rows` ou `--all-rows` para impedir o início acidental de uma carga completa.
+
+As mensagens de progresso são enviadas para stderr, enquanto o relatório JSON é enviado
+para stdout. O redirecionamento acima preserva um relatório estruturado com tempos de
+leitura, transformação e escrita, throughput, pico de memória, contagens totais e métricas
+por chunk. O diretório `artifacts/` não é versionado porque os resultados dependem do
+hardware e das condições de cada execução.
+
+O pipeline medido nesta etapa ainda não é idempotente: execute cada baseline sobre um banco
+vazio. A deduplicação global em memória e as transações independentes por tabela são
+limitações deliberadamente preservadas no baseline para comparação com a futura refatoração.
 
 **Detalhes da Importação:**
 - **257.170.290 registros** processados em chunks de 100.000
