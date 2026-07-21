@@ -1,0 +1,4 @@
+source_rows,repetitions,chunks,initial_rss_mb,first_cleanup_rss_mb,final_cleanup_rss_mb,cleanup_rss_growth_mb,total_rss_growth_mb,final_deduplication_identifiers,cleanup_rss_deduplication_correlation,mib_per_million_deduplication_identifiers
+100000,3,1,143.777344,183.480469,183.480469,0.000000,40.117188,114035,,
+1000000,3,10,143.722656,183.402344,333.496094,150.664062,189.578125,1062908,0.957790,129.964552
+5000000,3,50,142.402344,181.937500,749.750000,567.812500,607.652344,5436256,0.990784,106.618789

@@ -18,8 +18,8 @@ repeated runs, and structured results.
 | Baselines for 100 thousand and 1 million rows | Published |
 | Per-stage chunk memory instrumentation | Implemented |
 | Baseline analysis notebook | Implemented |
-| Retained-memory growth experiment | Next step |
-| PostgreSQL staging-based deduplication | Planned |
+| Retained-memory growth experiment | Published |
+| PostgreSQL staging-based deduplication | Next step |
 | Chunk-size comparison | Planned |
 | Pandas, Polars, and possible PySpark comparison | Planned |
 | Controlled index benchmarks with `EXPLAIN ANALYZE` | Planned |
@@ -44,9 +44,11 @@ The aggregated data is available in
 methodology is documented in
 [`notebooks/01_ingestion_baseline.ipynb`](notebooks/01_ingestion_baseline.ipynb).
 
-Growth in peak RSS alone does not prove memory retention. The pipeline now collects current
-RSS before and after each stage, together with the cardinality of its deduplication state.
-The repeated experiment using these new checkpoints has not been published yet.
+Growth in peak RSS alone does not prove memory retention. The repeated checkpoint experiment
+is published in
+[`notebooks/02_ingestion_memory_growth.ipynb`](notebooks/02_ingestion_memory_growth.ipynb),
+with its aggregate results in
+[`results/ingestion-memory-summary.csv`](results/ingestion-memory-summary.csv).
 
 ## Architecture
 
@@ -117,7 +119,8 @@ explicitly.
 │   │   └── insert.py              # ingestion pipeline
 │   └── models/                    # SQLAlchemy models
 ├── notebooks/
-│   └── 01_ingestion_baseline.ipynb
+│   ├── 01_ingestion_baseline.ipynb
+│   └── 02_ingestion_memory_growth.ipynb
 ├── results/                       # versioned aggregate results
 ├── scripts/
 │   └── run_ingestion_baseline.py  # reproducible experiment runner
@@ -274,6 +277,11 @@ High RSS after `del` does not automatically imply a leak: the allocator may reta
 memory for reuse. The analysis must relate checkpoints, set cardinality, and repeated runs
 before inferring algorithmic retention.
 
+The published experiment shows that median post-cleanup RSS grows from approximately
+182 MiB after the first chunk to 750 MiB after the fiftieth chunk in the 5-million-row
+scenario. Its association with retained identifier count is strong, but the causal test will
+be to move cross-chunk deduplication into PostgreSQL and repeat the same protocol.
+
 ## JupyterLab
 
 ```bash
@@ -339,8 +347,8 @@ pre-commit install
 
 ## Planned experiments
 
-1. Measure post-cleanup RSS and deduplication-set cardinality at multiple scales.
-2. Replace global Python deduplication with PostgreSQL staging and consolidation.
+1. Replace global Python deduplication with PostgreSQL staging and consolidation.
+2. Repeat the memory protocol as a controlled before-and-after comparison.
 3. Compare chunk sizes under an explicit memory constraint.
 4. Compare `COPY` with batched `INSERT`, isolating the database write stage.
 5. Compare Pandas and Polars with equivalent transformations and outputs.

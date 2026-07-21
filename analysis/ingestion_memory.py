@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from analysis.ingestion_baseline import (
@@ -133,3 +134,119 @@ def load_memory_experiment(manifest_path: Path) -> tuple[pd.DataFrame, dict]:
         "sizes": manifest["configuration"]["sizes"],
     }
     return pd.DataFrame(rows), metadata
+
+
+def measured_memory_chunks(chunks: pd.DataFrame) -> pd.DataFrame:
+    """Return measured chunks and derive analysis columns without mutating the input."""
+    measured = chunks.loc[chunks["kind"] == "run"].copy()
+    if measured.empty:
+        raise ValueError("no measured memory runs were found")
+    measured["deduplication_identifiers"] = (
+        measured["responsavel_identifiers"] + measured["beneficiario_identifiers"]
+    )
+    return measured
+
+
+def aggregate_memory_trajectory(chunks: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate repeated runs at each processed-row checkpoint."""
+    measured = measured_memory_chunks(chunks)
+    metrics = [
+        *(f"current_rss_{checkpoint}_mb" for checkpoint in MEMORY_CHECKPOINTS),
+        "active_chunk_rss_high_mb",
+        "responsavel_identifiers",
+        "beneficiario_identifiers",
+        "deduplication_identifiers",
+        *(f"dataframe_{name}_mb" for name in DATAFRAME_NAMES),
+    ]
+    grouped = measured.groupby(["source_rows", "processed_rows"], sort=True)[metrics]
+    trajectory = grouped.agg(["median", "min", "max"]).reset_index()
+    trajectory.columns = [
+        "_".join(part for part in column if part) if isinstance(column, tuple) else column
+        for column in trajectory.columns
+    ]
+    return trajectory
+
+
+def summarize_memory_runs(chunks: pd.DataFrame) -> pd.DataFrame:
+    """Summarize retention indicators per input size across measured runs."""
+    measured = measured_memory_chunks(chunks)
+    run_rows: list[dict] = []
+
+    for (source_rows, run), group in measured.groupby(["source_rows", "run"], sort=True):
+        ordered = group.sort_values("processed_rows")
+        first = ordered.iloc[0]
+        last = ordered.iloc[-1]
+        correlation = float("nan")
+        mib_per_million_identifiers = float("nan")
+        if len(ordered) > 1:
+            correlation = ordered["current_rss_after_cleanup_mb"].corr(
+                ordered["deduplication_identifiers"]
+            )
+            mib_per_million_identifiers = float(
+                np.polyfit(
+                    ordered["deduplication_identifiers"] / 1_000_000,
+                    ordered["current_rss_after_cleanup_mb"],
+                    1,
+                )[0]
+            )
+
+        run_rows.append(
+            {
+                "source_rows": int(source_rows),
+                "run": int(run),
+                "chunks": len(ordered),
+                "initial_rss_mb": first["current_rss_before_read_mb"],
+                "first_cleanup_rss_mb": first["current_rss_after_cleanup_mb"],
+                "final_cleanup_rss_mb": last["current_rss_after_cleanup_mb"],
+                "cleanup_rss_growth_mb": (
+                    last["current_rss_after_cleanup_mb"]
+                    - first["current_rss_after_cleanup_mb"]
+                ),
+                "total_rss_growth_mb": (
+                    last["current_rss_after_cleanup_mb"]
+                    - first["current_rss_before_read_mb"]
+                ),
+                "final_deduplication_identifiers": last["deduplication_identifiers"],
+                "cleanup_rss_deduplication_correlation": correlation,
+                "mib_per_million_deduplication_identifiers": (
+                    mib_per_million_identifiers
+                ),
+            }
+        )
+
+    per_run = pd.DataFrame(run_rows)
+    summary = (
+        per_run.groupby("source_rows", sort=True)
+        .agg(
+            repetitions=("run", "count"),
+            chunks=("chunks", "median"),
+            initial_rss_mb=("initial_rss_mb", "median"),
+            first_cleanup_rss_mb=("first_cleanup_rss_mb", "median"),
+            final_cleanup_rss_mb=("final_cleanup_rss_mb", "median"),
+            cleanup_rss_growth_mb=("cleanup_rss_growth_mb", "median"),
+            total_rss_growth_mb=("total_rss_growth_mb", "median"),
+            final_deduplication_identifiers=(
+                "final_deduplication_identifiers",
+                "median",
+            ),
+            cleanup_rss_deduplication_correlation=(
+                "cleanup_rss_deduplication_correlation",
+                "median",
+            ),
+            mib_per_million_deduplication_identifiers=(
+                "mib_per_million_deduplication_identifiers",
+                "median",
+            ),
+        )
+        .reset_index()
+    )
+    summary["chunks"] = summary["chunks"].astype(int)
+    summary["final_deduplication_identifiers"] = summary[
+        "final_deduplication_identifiers"
+    ].astype(int)
+    return summary
+
+
+def write_public_memory_summary(summary: pd.DataFrame, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(destination, index=False, float_format="%.6f")
