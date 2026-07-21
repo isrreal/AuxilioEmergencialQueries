@@ -1,1 +1,1 @@
-from app.models.models import Auxilio, Beneficiario, Responsavel, Usuario
+from app.models.models import Auxilio, Beneficiario, Responsavel  # noqa: F401

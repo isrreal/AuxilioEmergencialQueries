@@ -1,16 +1,13 @@
 import asyncio
 import pandas as pd
-from app.core.database import engine, Session
+from app.core.database import engine
 from app.core.configs import settings
 from typing import Set, Tuple
 from tqdm import tqdm
 import numpy as np
-from app.models.models import Usuario
-from sqlalchemy import select
-from app.core.security import gerar_hash_senha 
 
 async def create_tables() -> None:
-    import app.models.__all_models
+    import app.models.__all_models  # noqa: F401
 
     print("Criando as tabelas do banco de dados...")
 
@@ -19,32 +16,6 @@ async def create_tables() -> None:
         await db.run_sync(settings.DBBaseModel.metadata.create_all)
 
     print("Tabelas criadas com sucesso")
-
-async def insert_admin():
-    """
-    Insere o usuário administrador root no banco se ele ainda não existir.
-    """
-    async with Session() as db:
-        query = select(Usuario).where(Usuario.email == settings.ADMIN_USER)
-        result = await db.execute(query)
-        existing_user = result.scalar_one_or_none()
-
-        if existing_user:
-            print("Usuário administrador já existe.")
-            return
-
-        admin_user = Usuario(
-            nome = "administrador",
-            sobrenome = "administrador",
-            email = settings.ADMIN_USER,
-            senha = gerar_hash_senha(settings.ADMIN_PASSWORD),
-            eh_admin = True
-        )
-
-        db.add(admin_user)
-        await db.commit()
-        print("Usuário administrador criado com sucesso!")
-
 
 async def copy_from_dataframe(table_name: str, df: pd.DataFrame) -> None:
     """
@@ -139,7 +110,6 @@ def prepare_dataframes(chunk: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame,
 
 async def main():
     await create_tables()
-    await insert_admin()
 
     print("\nInserindo responsável indefinido...")
     df_indefinido: pd.DataFrame = pd.DataFrame([{
@@ -155,7 +125,7 @@ async def main():
 
     chunk_size = 100000
     # total_rows = 257_170_290
-    total_rows_to_process = 2_000_000
+    total_rows_to_process = 20_000_000
     
     nis_responsaveis_inseridos: Set = set()
     nis_beneficiarios_inseridos: Set = set()

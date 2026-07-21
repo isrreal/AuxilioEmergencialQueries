@@ -42,7 +42,6 @@ O projeto é composto por três serviços containerizados:
 - **Frontend**: Streamlit, Pandas, Requests
 - **Banco de Dados**: PostgreSQL 15 Alpine
 - **Containerização**: Docker, Docker Compose
-- **Autenticação**: JWT (OAuth2)
 - **Processamento**: Asyncio, AsyncPG (bulk insert)
 
 ## 📊 Cenários de Benchmark
@@ -91,11 +90,9 @@ O projeto é composto por três serviços containerizados:
 │   │       └── endpoints/
 │   │           └── consultas_routes.py  # Rotas de benchmark
 │   ├── core/
-│   │   ├── auth.py            # Autenticação JWT
 │   │   ├── deps.py            # Dependências (DB session)
 │   │   ├── config.py          # Configurações
 │   │   ├── database.py        # Engine e Session AsyncPG
-│   │   └── security.py        # Hashing de senhas
 │   ├── models/
 │   │   ├── models.py          # Modelos SQLAlchemy
 │   │   └── __all_models.py    # Import de todos os models
@@ -121,12 +118,6 @@ POSTGRES_USER=seu_usuario
 POSTGRES_PASSWORD=sua_senha
 DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/emergencial_aid_db
 
-# Segurança
-JWT_SECRET=sua_chave_secreta_jwt_muito_segura
-
-# Admin
-ADMIN_USER=admin@example.com
-ADMIN_PASSWORD=senha_admin_segura
 ```
 
 ### Iniciar o Projeto
@@ -164,7 +155,6 @@ python insert.py
 - **257.170.290 registros** processados em chunks de 100.000
 - Utiliza **asyncpg COPY** para inserção em massa (bulk insert)
 - Remove duplicatas automaticamente
-- Cria usuário admin automaticamente
 - Progress bar com `tqdm` para acompanhamento
 
 **Estrutura dos dados importados:**
@@ -205,14 +195,6 @@ docker-compose logs -f api app_runner
 6. Visualize os resultados: tempo, ganho percentual, gráfico e amostra de dados
 
 ### API Endpoints
-
-**Autenticação:**
-```http
-POST /api/v1/login
-Content-Type: application/x-www-form-urlencoded
-
-username=admin@example.com&password=senha_admin_segura
-```
 
 **Gerenciamento de Índices:**
 ```http
@@ -301,15 +283,6 @@ CREATE TABLE auxilio (
     nis_beneficiario VARCHAR REFERENCES beneficiario(nis_beneficiario)
 );
 ```
-
-## 🛡️ Segurança
-
-- Autenticação JWT para rotas protegidas
-- Variáveis sensíveis em `.env` (não versionado)
-- Hashing de senhas com bcrypt
-- Rate limiting configurável (600s timeout padrão)
-- Validação de inputs com Pydantic
-- Usuário admin criado automaticamente no `insert.py`
 
 ## 🐛 Troubleshooting
 

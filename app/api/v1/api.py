@@ -1,11 +1,6 @@
-from fastapi import APIRouter, Depends, status, HTTPException
-from fastapi.security import OAuth2PasswordRequestForm
-from fastapi.responses import JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter
 
 from app.api.v1.endpoints import consultas_routes
-from app.core.deps import get_session
-from app.core.auth import criar_token_acesso, autenticar
 
 api_router: APIRouter = APIRouter()
 
@@ -14,37 +9,3 @@ api_router.include_router(
     prefix = "/consultas",
     tags = ["Consultas"]
 )
-
-@api_router.post(
-    "/login", 
-    summary = "Autenticar usuário e gerar token JWT",
-    tags = ["Autenticação"])
-async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_session)
-):
-    """
-    Rota de login para autenticar um usuário e retornar um token JWT.
-
-    Args:
-        form_data: Formulário OAuth2 com username e password
-        db: Sessão assíncrona do banco de dados
-
-    Returns:
-        JSON contendo o access_token e tipo de token ("bearer")
-    """
-    usuario = await autenticar(email = form_data.username, senha = form_data.password, db = db)
-
-    if not usuario:
-        raise HTTPException(
-            status_code = status.HTTP_400_BAD_REQUEST,
-            detail = "Dados de acesso incorretos."
-        )
-
-    return JSONResponse(
-        content = {
-            "access_token": criar_token_acesso(subject = usuario.id),
-            "token_type": "bearer"
-        },
-        status_code = status.HTTP_200_OK
-    )

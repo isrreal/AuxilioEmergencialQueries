@@ -2,8 +2,6 @@ from typing import ClassVar, Optional, List
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm.decl_api import DeclarativeMeta
-from typing import List
-import os
 
 class Settings(BaseSettings):
     """
@@ -22,13 +20,6 @@ class Settings(BaseSettings):
     
     DBBaseModel: ClassVar[DeclarativeMeta] = declarative_base()
 
-    ADMIN_USER: str = os.getenv("ADMIN_USER")
-    ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD")
-    
-    JWT_SECRET: str = 'LOB-VggKMl1pDElBfgQsbFq1w72x1aCswhbaayFthEQ'
-    ALGORITHM: str = 'HS256'
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7 
-    
     BACKEND_CORS_ORIGINS: List = [
         "http://localhost",
         "http://localhost:3000",
