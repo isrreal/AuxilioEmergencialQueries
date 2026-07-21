@@ -1,75 +1,56 @@
 services:
   db:
     image: postgres:15-alpine
-    container_name: emergencial_aid_db_container
     env_file:
       - .env
     environment:
-      POSTGRES_DB: emergencial_aid_db
+      POSTGRES_DB: ${POSTGRES_DB:-emergencial_aid_db}
     volumes:
-      # Monta o volume nomeado "postgres_data" no diretório onde o PostgreSQL
-      # armazena seus dados. Isso garante persistência mesmo após remover o container.
-      
       - postgres_data:/var/lib/postgresql/data
-      - ./dataset:/data         
     ports:
-      - "5430:5432"
+      - "${POSTGRES_HOST_PORT:-5430}:5432"
     healthcheck:
-      # Diz ao docker que comando será executado num shell. Verifica se o servidor emergencial_aid_db está pronto para aceitar conexões.
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d emergencial_aid_db"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-# Para rodar somente a API: docker compose up db api
-# docker compose run cria um container isolado e temporário; não sobe dependências,
-# não executa healthchecks e não expõe portas automaticamente.
+      start_period: 5s
 
   api:
+    image: csgbd-app:local
     build: .
-    container_name: fastapi_server
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - .:/app
-      - ./dataset:/data         
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env
+    init: true
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/emergencial_aid_db
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-emergencial_aid_db}
+      DB_ECHO: ${DB_ECHO:-false}
+    ports:
+      - "${API_HOST_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
-# Container de visualização streamlit.
   app_runner:
-    build: .
-    container_name: emergencial_aid_runner
+    image: csgbd-app:local
+    init: true
     command: streamlit run dashboard.py --server.address=0.0.0.0 --server.port=8501
-    volumes:
-      - .:/app
-      - ./dataset:/data         
-    env_file:
-      - .env
     environment:
-      # Diz ao Python que o diretório "/app" deve ser adicionado ao path de módulo.
-      PYTHONPATH: /app
-
-      # No docker compose, quando refere-se ao enderço do container, colocar seu nome: e.g "db"
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/emergencial_aid_db
-
-    # Só inicia "app_runner" depois que o serviço "db" for marcado como 'healthy'
-    # pelo healthcheck. Não garante funcionamento contínuo, apenas a ordem de inicialização.
-    depends_on:
-      db:
-        condition: service_healthy
+      API_BASE_URL: http://api:8000/api/v1
     ports:
-      - "8501:8501"
-
-# Declaração dos volumes nomeados usados nos serviços acima.
-# O Docker criaria volumes automaticamente se não declarados, mas declarar explicitamente
-# dá clareza e permite controle, backup e versionamento das configurações.
+      - "${DASHBOARD_HOST_PORT:-8501}:8501"
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
-  postgres_data: # fica em /var/lib/docker/volumes/postgres_data/_data/
+  postgres_data:

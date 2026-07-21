@@ -1,0 +1,12 @@
+services:
+  api:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./app:/app/app:ro
+      - ./alembic:/app/alembic:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+      - ./dataset:/data:ro
+
+  app_runner:
+    volumes:
+      - ./dashboard.py:/app/dashboard.py:ro

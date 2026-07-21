@@ -2,7 +2,6 @@ dataset/
 *.csv
 *.xlsx
 *.xls
-*.json
 *.parquet
 
 __pycache__/
@@ -26,12 +25,11 @@ ENV/
 
 .dockerignore
 Dockerfile
-docker-compose.yml
+docker-compose*.yml
 
 *.md
 docs/
 
-tests/
 .pytest_cache/
 
 *.log
@@ -44,5 +42,5 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 
-.env.example
-README.md
+.env
+.env.*
